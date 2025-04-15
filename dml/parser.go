@@ -3,7 +3,10 @@ package dml
 import (
     "encoding/json"
     "fmt"
+    "os"
     "os/exec"
+    "path/filepath"
+
     "github.com/tree-software-company/dml-go/internal"
 )
 
@@ -14,15 +17,20 @@ func Parse(filename string) (map[string]any, error) {
     }
 
     cmd := exec.Command("java", "-jar", jar, "-w", "json", filename)
-    output, err := cmd.CombinedOutput() 
-    if err != nil {
-        return nil, fmt.Errorf("dml execution failed:\n%s", string(output))
+    if out, err := cmd.CombinedOutput(); err != nil {
+        return nil, fmt.Errorf("dml execution failed:\n%s", string(out))
     }
-    
+
+    jsonFile := filename[:len(filename)-len(filepath.Ext(filename))] + ".json"
+    content, err := os.ReadFile(jsonFile)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read generated json: %w", err)
+    }
 
     var result map[string]any
-    if err := json.Unmarshal(output, &result); err != nil {
-        return nil, err
+    if err := json.Unmarshal(content, &result); err != nil {
+        return nil, fmt.Errorf("invalid JSON: %w", err)
     }
+
     return result, nil
 }

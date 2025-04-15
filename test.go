@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-    data, err := dml.Parse("testdata/example.dml")
+    data, err := dml.Parse("example.dml")
     if err != nil {
         log.Fatal(err)
     }

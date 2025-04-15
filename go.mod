@@ -1,7 +1,3 @@
-module myapp
+module github.com/tree-software-company/dml-go
 
 go 1.21
-
-require (
-    github.com/tree-software-company/dml-go v0.0.1
-)

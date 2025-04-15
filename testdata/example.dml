@@ -1,0 +1,2 @@
+string name = "Szymon";
+string greeting = "Hello, " + name;

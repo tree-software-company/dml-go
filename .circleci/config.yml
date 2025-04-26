@@ -14,19 +14,21 @@ jobs:
       - run:
           name: Download .jar & verify SHA
           command: |
-            go run internal/jar.go
+            go run ./internal/jar.go
 
       - run:
-          name: Build CLI
-          command: go build -o dml ./cmd/dml
+          name: Build CLI binary
+          command: |
+            go build -o bin/dml ./cmd/dml
 
       - run:
           name: Run unit tests
-          command: go test ./...
+          command: |
+            go test ./...
 
       - store_artifacts:
-          path: dml
-          destination: bin/dml
+          path: bin
+          destination: bin
 
 workflows:
   build:

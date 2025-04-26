@@ -1,2 +1,2 @@
 string name = "Szymon";
-string greeting = "Hello, Szymon";
+string greeting = "Hello, " + name;

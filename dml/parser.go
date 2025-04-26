@@ -32,5 +32,7 @@ func Parse(filename string) (map[string]any, error) {
         return nil, fmt.Errorf("invalid JSON: %w", err)
     }
 
+    _ = os.Remove(jsonFile)
+
     return result, nil
 }

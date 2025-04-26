@@ -12,11 +12,6 @@ jobs:
       - checkout
 
       - run:
-          name: Download .jar & verify SHA
-          command: |
-            go run ./internal/jar.go
-
-      - run:
           name: Build CLI binary
           command: |
             go build -o bin/dml ./cmd/dml

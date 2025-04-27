@@ -1,2 +1,3 @@
 string name = "Szymon";
-string greeting = "Hello, " + name;
+number age = 30
+boolean isActive = true;

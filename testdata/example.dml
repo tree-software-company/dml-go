@@ -1,3 +1,11 @@
-string name = "Szymon";
-number age = 30
-boolean isActive = true;
+map server = {
+  // port is set explicitly
+  "port": 9090
+  // "timeout" and "name" are missing → Defaults() should fill them
+};
+
+map database = {
+  // only port is set
+  "port": 3306
+  // "host" is missing → Defaults() should fill it
+};

@@ -7,6 +7,7 @@ import (
     "os/exec"
     "path/filepath"
     "reflect"
+    "time"
 
     "github.com/tree-software-company/dml-go/internal"
 )
@@ -127,3 +128,29 @@ func Load[T any](filename string) (T, error) {
     return result, nil
 }
 
+func Watch(file string, onChange func()) error {
+	info, err := os.Stat(file)
+	if err != nil {
+		return err
+	}
+
+	lastMod := info.ModTime()
+
+	go func() {
+		for {
+			time.Sleep(1 * time.Second)
+
+			info, err := os.Stat(file)
+			if err != nil {
+				continue 
+			}
+
+			if info.ModTime().After(lastMod) {
+				lastMod = info.ModTime()
+				onChange()
+			}
+		}
+	}()
+
+	return nil
+}

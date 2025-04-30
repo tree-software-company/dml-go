@@ -12,6 +12,12 @@ type Config struct {
     data map[string]any
 }
 
+type ValidationResult struct {
+    MissingKeys []string
+    WrongTypes  []string
+    IsValid     bool
+}
+
 func NewConfig(filename string) (*Config, error) {
     parsed, err := Cache(filename)
     if err != nil {
@@ -30,13 +36,14 @@ func (c *Config) GetString(key string) string {
 }
 
 func (c *Config) GetNumber(key string) float64 {
-    if val, ok := c.data[key]; ok {
-        if num, ok := val.(float64); ok {
-            return num
+    if val, ok := c.resolveNestedKey(key); ok {
+        if f, ok := val.(float64); ok {
+            return f
         }
     }
     return 0
 }
+
 
 func (c *Config) GetBool(key string) bool {
     if val, ok := c.data[key]; ok {
@@ -158,26 +165,58 @@ func joinWithNewlines(list []string) string {
 }
 
 func (c *Config) resolveNestedKey(key string) (any, bool) {
-    parts := strings.Split(key, ".")
-    current := c.data
+	parts := strings.Split(key, ".")
+	var current any = c.data
 
-    for i, part := range parts {
-        value, ok := current[part]
+	for _, part := range parts {
+		if m, ok := current.(map[string]any); ok {
+			current, ok = m[part]
+			if !ok {
+				return nil, false
+			}
+		} else {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+
+func (c *Config) MissedKeys(required []string) []string {
+    var missing []string
+    for _, key := range required {
+        if _, ok := c.resolveNestedKey(key); !ok {
+            missing = append(missing, key)
+        }
+    }
+    return missing
+}
+
+func (c *Config) MissedTypedKeys(expected map[string]string) []string {
+    var wrong []string
+
+    for key, wantType := range expected {
+        val, ok := c.resolveNestedKey(key)
         if !ok {
-            return nil, false
+            continue
         }
 
-        if i == len(parts)-1 {
-            return value, true
+        actualType := fmt.Sprintf("%T", val)
+        if actualType != wantType {
+            wrong = append(wrong, key)
         }
-
-        nested, ok := value.(map[string]any)
-        if !ok {
-            return nil, false
-        }
-
-        current = nested
     }
 
-    return nil, false
+    return wrong
+}
+
+func (c *Config) ValidateState(requiredKeys []string, expectedTypes map[string]string) ValidationResult {
+    missing := c.MissedKeys(requiredKeys)
+    wrongTypes := c.MissedTypedKeys(expectedTypes)
+
+    return ValidationResult{
+        MissingKeys: missing,
+        WrongTypes:  wrongTypes,
+        IsValid:     len(missing) == 0 && len(wrongTypes) == 0,
+    }
 }

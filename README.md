@@ -111,6 +111,7 @@ Then open:
 | `Cache(file string)`     | Loads and caches parsed data in memory |
 | `Reload(file string)`    | Forces re-parsing and updates the cache for a file |
 | `ClearCache()`           | Clears all cached parsed files from memory |
+| `Watch(file)`           | Live reload of dml file |
 
 ### 🔹 `Config` methods
 
@@ -127,6 +128,14 @@ Then open:
 | `Dump()`                     | Dumps the entire parsed data as formatted JSON |
 | `ValidateRequired(keys...)`  | Validates that specific keys exist |
 | `ValidateRequiredTyped(rules map[string]string)` | Validates that keys exist and match expected types |
+
+### 🔹 `Debug` methods
+
+| Method                      | Description |
+|------------------------------|-------------|
+| `MissedKeys()`      | Schow which variables wasn't declarates in dml config |
+| `MissedTypedKeys()`      | Schow which types wasn't declarates in dml config |
+| `ValidateState()`      | Schow which types and variables wasn't declarates in dml config |
 
 ### 🔹 Internal helpers
 

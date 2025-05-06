@@ -6,6 +6,7 @@ import (
     "sort"
 	"reflect"
 	"strings"
+    "os"
 )
 
 type Config struct {
@@ -220,3 +221,50 @@ func (c *Config) ValidateState(requiredKeys []string, expectedTypes map[string]s
         IsValid:     len(missing) == 0 && len(wrongTypes) == 0,
     }
 }
+
+func SetDefaultsToFile(file string, defaults map[string]any) error {
+	cfg, err := NewConfig(file)
+	if err != nil {
+		return err
+	}
+
+	updated := false
+	for key, defValue := range defaults {
+		if _, ok := cfg.resolveNestedKey(key); !ok {
+			setNestedKey(cfg.data, key, defValue)
+			updated = true
+		}
+	}
+
+	if !updated {
+		return nil // Nothing to change
+	}
+
+	// Convert back to JSON-like pretty string
+	output, err := json.MarshalIndent(cfg.data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(file, output, 0644)
+}
+
+
+func setNestedKey(data map[string]any, key string, value any) {
+	parts := strings.Split(key, ".")
+	for i := 0; i < len(parts)-1; i++ {
+		part := parts[i]
+
+		if _, ok := data[part]; !ok {
+			data[part] = map[string]any{}
+		}
+
+		if next, ok := data[part].(map[string]any); ok {
+			data = next
+		} else {
+			return 
+        }
+        data[parts[len(parts)-1]] = value
+    }
+}
+

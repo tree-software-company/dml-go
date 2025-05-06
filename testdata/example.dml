@@ -1,11 +1,11 @@
-map server = {
-  // port is set explicitly
-  "port": 9090
-  // "timeout" and "name" are missing → Defaults() should fill them
-};
-
-map database = {
-  // only port is set
-  "port": 3306
-  // "host" is missing → Defaults() should fill it
-};
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432
+  },
+  "server": {
+    "name": "MyApp1",
+    "port": 8080,
+    "timeout": 15
+  }
+}

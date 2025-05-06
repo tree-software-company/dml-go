@@ -112,6 +112,7 @@ Then open:
 | `Reload(file string)`    | Forces re-parsing and updates the cache for a file |
 | `ClearCache()`           | Clears all cached parsed files from memory |
 | `Watch(file)`           | Live reload of dml file |
+| `SetDefaultsToFile(file, variables)`| Change variables from files to go|
 
 ### 🔹 `Config` methods
 

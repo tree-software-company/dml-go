@@ -1,39 +1,31 @@
 package main
 
 import (
-    "fmt"
-    "log"
+	"fmt"
+	"log"
 
-    "github.com/tree-software-company/dml-go/dml"
+	"github.com/tree-software-company/dml-go/dml"
 )
 
-func loadConfig() *dml.Config {
-    cfg, err := dml.NewConfig("testdata/example.dml")
-    if err != nil {
-        fmt.Println("❌ Error loading config:", err)
-        return nil
-    }
-    fmt.Println("📄 Reloaded config! Keys:", cfg.Keys())
-    return cfg
-}
-
 func main() {
-    cfg := loadConfig()
+	defaults := map[string]any{
+		"server.port":    8080,
+		"server.timeout": 15,
+		"server.name":    "MyApp1",
+		"database.host":  "localhost",
+		"database.port":  5432,
+	}
 
-    err := dml.Watch("testdata/example.dml", func() {
-        newCfg := loadConfig()
-        if newCfg != nil {
-            cfg = newCfg
-        }
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
+	err := dml.SetDefaultsToFile("testdata/example.dml", defaults)
+	if err != nil {
+		log.Fatal("❌ Failed to apply defaults:", err)
+	}
 
-    if cfg != nil {
-        fmt.Println("✅ Initial config loaded with keys:", cfg.Keys())
-    }
+	cfg, err := dml.NewConfig("testdata/example.dml")
+	if err != nil {
+		log.Fatal("❌ Failed to reload config:", err)
+	}
 
-    fmt.Println("👀 Watching testdata/example.dml. Press ENTER to exit.")
-    fmt.Scanln()
+	fmt.Println("📦 Full config dump:")
+	fmt.Println(cfg.Dump())
 }

@@ -97,11 +97,45 @@ func (c *Config) Keys() []string {
 }
 
 func (c *Config) Dump() string {
-    bytes, err := json.MarshalIndent(c.data, "", "  ")
-    if err != nil {
-        return "{}"
-    }
-    return string(bytes)
+	return renderAsDML(c.data, 0)
+}
+
+func renderAsDML(data map[string]any, indent int) string {
+	ind := strings.Repeat("  ", indent)
+	var out strings.Builder
+
+	for k, v := range data {
+		switch val := v.(type) {
+		case map[string]any:
+			out.WriteString(fmt.Sprintf("%smap %s = {\n", ind, k))
+			out.WriteString(renderAsDML(val, indent+1))
+			out.WriteString(fmt.Sprintf("%s};\n\n", ind))
+		case string:
+			out.WriteString(fmt.Sprintf("%sstring %s = \"%s\";\n", ind, k, val))
+		case float64:
+			out.WriteString(fmt.Sprintf("%snumber %s = %v;\n", ind, k, val))
+		case bool:
+			out.WriteString(fmt.Sprintf("%sboolean %s = %v;\n", ind, k, val))
+		case []any:
+			out.WriteString(fmt.Sprintf("%slist %s = [", ind, k))
+			for i, item := range val {
+				if i > 0 {
+					out.WriteString(", ")
+				}
+				switch item := item.(type) {
+				case string:
+					out.WriteString(fmt.Sprintf("\"%s\"", item))
+				default:
+					out.WriteString(fmt.Sprintf("%v", item))
+				}
+			}
+			out.WriteString("];\n")
+		default:
+			out.WriteString(fmt.Sprintf("%s %s = %v;\n", ind, k, val))
+		}
+	}
+
+	return out.String()
 }
 
 func (c *Config) ValidateRequired(keys ...string) error {
@@ -237,10 +271,10 @@ func SetDefaultsToFile(file string, defaults map[string]any) error {
 	}
 
 	if !updated {
-		return nil // Nothing to change
+		return nil 
 	}
 
-	// Convert back to JSON-like pretty string
+
 	output, err := json.MarshalIndent(cfg.data, "", "  ")
 	if err != nil {
 		return err
@@ -267,4 +301,3 @@ func setNestedKey(data map[string]any, key string, value any) {
         data[parts[len(parts)-1]] = value
     }
 }
-

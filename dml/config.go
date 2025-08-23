@@ -1,7 +1,6 @@
 package dml
 
 import (
-    "encoding/json"
     "fmt"
     "sort"
 	"reflect"
@@ -10,7 +9,8 @@ import (
 )
 
 type Config struct {
-    data map[string]any
+	data        map[string]any
+	defaultKeys map[string]bool
 }
 
 type ValidationResult struct {
@@ -258,31 +258,42 @@ func (c *Config) ValidateState(requiredKeys []string, expectedTypes map[string]s
 
 func SetDefaultsToFile(file string, defaults map[string]any) error {
 	cfg, err := NewConfig(file)
+
 	if err != nil {
-		return err
+		fmt.Printf("⚠️ Creating new config (could not read '%s'): %v\n", file, err)
+		cfg = &Config{data: make(map[string]any)}
+	} else if cfg.data == nil {
+		cfg.data = make(map[string]any)
 	}
 
-	updated := false
+	var defaultKeys []string
 	for key, defValue := range defaults {
 		if _, ok := cfg.resolveNestedKey(key); !ok {
 			setNestedKey(cfg.data, key, defValue)
-			updated = true
+			defaultKeys = append(defaultKeys, key)
 		}
 	}
 
-	if !updated {
-		return nil 
-	}
+	cfg.SetMetaDefaults(defaultKeys)
 
-
-	output, err := json.MarshalIndent(cfg.data, "", "  ")
+	output := cfg.Dump()
+	err = os.WriteFile(file, []byte(output), 0644)
 	if err != nil {
-		return err
+		return fmt.Errorf("❌ Failed to write file: %w", err)
 	}
 
-	return os.WriteFile(file, output, 0644)
+	fmt.Println("✅ Defaults applied and saved to", file)
+	return nil
 }
 
+
+
+func (c *Config) SetMetaDefaults(keys []string) {
+	c.defaultKeys = make(map[string]bool)
+	for _, k := range keys {
+		c.defaultKeys[k] = true
+	}
+}
 
 func setNestedKey(data map[string]any, key string, value any) {
 	parts := strings.Split(key, ".")

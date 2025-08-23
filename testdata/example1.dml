@@ -4,3 +4,8 @@ map server = {
    timeout = 30;
 };
 
+map database = {
+   port = 5432;
+  string host = "localhost1";
+};
+

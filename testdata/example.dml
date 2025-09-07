@@ -1,11 +1,6 @@
-{
-  "database": {
-    "host": "localhost",
-    "port": 5432
-  },
-  "server": {
-    "name": "MyApp1",
-    "port": 8080,
-    "timeout": 15
-  }
-}
+map server = {
+  string name = "MyApp1";
+   port = 8080;
+   timeout = 30;
+};
+

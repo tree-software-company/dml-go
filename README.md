@@ -104,45 +104,45 @@ Then open:
 
 ### 🔹 Core functions
 
-| Function                | Description |
-|--------------------------|-------------|
-| `Load(file string)`      | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
-| `NewConfig(file string)` | Loads and parses a `.dml` file into a `Config` structure |
-| `Cache(file string)`     | Loads and caches parsed data in memory |
-| `Reload(file string)`    | Forces re-parsing and updates the cache for a file |
-| `ClearCache()`           | Clears all cached parsed files from memory |
-| `Watch(file)`           | Live reload of dml file |
-| `SetDefaultsToFile(file, variables)`| Change variables from files to go|
+| Function                                            | Description                                                        |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
+| `Load(file string)`                                 | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
+| `NewConfig(file string)`                            | Loads and parses a `.dml` file into a `Config` structure           |
+| `Cache(file string)`                                | Loads and caches parsed data in memory                             |
+| `Reload(file string)`                               | Forces re-parsing and updates the cache for a file                 |
+| `ClearCache()`                                      | Clears all cached parsed files from memory                         |
+| `Watch(file)`                                       | Live reload of dml file                                            |
+| `SetDefaultsToFile(file, variables, isOverwriting)` | Change variables from files to go                                  |
 
 ### 🔹 `Config` methods
 
-| Method                      | Description |
-|------------------------------|-------------|
-| `GetString(key string)`      | Returns a string value (supports nested keys like `server.name`) |
-| `GetNumber(key string)`      | Returns a float64 number value |
-| `GetBool(key string)`        | Returns a boolean value |
-| `GetList(key string)`        | Returns a list or an empty list |
-| `GetMap(key string)`         | Returns a map or an empty map |
-| `MustString(key string)`     | Returns a string value or panics if missing |
-| `Has(key string)`            | Checks if a key exists |
-| `Keys()`                     | Returns a sorted list of top-level keys |
-| `Dump()`                     | Dumps the entire parsed data as formatted JSON |
-| `ValidateRequired(keys...)`  | Validates that specific keys exist |
-| `ValidateRequiredTyped(rules map[string]string)` | Validates that keys exist and match expected types |
+| Method                                           | Description                                                      |
+| ------------------------------------------------ | ---------------------------------------------------------------- |
+| `GetString(key string)`                          | Returns a string value (supports nested keys like `server.name`) |
+| `GetNumber(key string)`                          | Returns a float64 number value                                   |
+| `GetBool(key string)`                            | Returns a boolean value                                          |
+| `GetList(key string)`                            | Returns a list or an empty list                                  |
+| `GetMap(key string)`                             | Returns a map or an empty map                                    |
+| `MustString(key string)`                         | Returns a string value or panics if missing                      |
+| `Has(key string)`                                | Checks if a key exists                                           |
+| `Keys()`                                         | Returns a sorted list of top-level keys                          |
+| `Dump()`                                         | Dumps the entire parsed data as formatted JSON                   |
+| `ValidateRequired(keys...)`                      | Validates that specific keys exist                               |
+| `ValidateRequiredTyped(rules map[string]string)` | Validates that keys exist and match expected types               |
 
 ### 🔹 `Debug` methods
 
-| Method                      | Description |
-|------------------------------|-------------|
-| `MissedKeys()`      | Schow which variables wasn't declarates in dml config |
-| `MissedTypedKeys()`      | Schow which types wasn't declarates in dml config |
-| `ValidateState()`      | Schow which types and variables wasn't declarates in dml config |
+| Method              | Description                                                     |
+| ------------------- | --------------------------------------------------------------- |
+| `MissedKeys()`      | Schow which variables wasn't declarates in dml config           |
+| `MissedTypedKeys()` | Schow which types wasn't declarates in dml config               |
+| `ValidateState()`   | Schow which types and variables wasn't declarates in dml config |
 
 ### 🔹 Internal helpers
 
-| Helper                     | Description |
-|-----------------------------|-------------|
-| `resolveNestedKey(key)`     | Allows reading deeply nested values using dot notation like `server.port` |
+| Helper                  | Description                                                               |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `resolveNestedKey(key)` | Allows reading deeply nested values using dot notation like `server.port` |
 
 ---
 

@@ -1,11 +1,8 @@
 map server = {
-  string name = "MyApp1";
-   port = 8080;
-   timeout = 30;
+  "name": "MyAp",
+  "port": "test5",
+  "timeout": "test2"
 };
 
-map database = {
-   port = 5432;
-  string host = "localhost1";
-};
+string name = "MyAp";
 

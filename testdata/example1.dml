@@ -1,0 +1,7 @@
+map server = {
+  "name": "MyAp",
+  "port": "test5",
+  "timeout": "test2"
+};
+
+string name = "MyAp";

@@ -8,15 +8,12 @@ import (
 )
 
 func main() {
-	defaults := map[string]any{
-		"server.port":    8080,
-		"server.timeout": 15,
-		"server.name":    "MyApp1",
-		"database.host":  "localhost",
-		"database.port":  5432,
-	}
+	err := dml.SetDefaultsToFile("testdata/example1.dml", map[string]any{
+		"server.port":    "test5",
+		"server.timeout": "test2",
+		"name":"MyApp",
+	}, false) 
 
-	err := dml.SetDefaultsToFile("testdata/example.dml", defaults)
 	if err != nil {
 		log.Fatal("❌ Failed to apply defaults:", err)
 	}

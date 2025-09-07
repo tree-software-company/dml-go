@@ -24,6 +24,11 @@ func NewConfig(filename string) (*Config, error) {
     if err != nil {
         return nil, fmt.Errorf("❌ Failed to parse DML file '%s': %w", filename, err)
     }
+
+    if parsed == nil {
+        parsed = make(map[string]any)
+    }
+
     return &Config{data: parsed}, nil
 }
 
@@ -108,8 +113,32 @@ func renderAsDML(data map[string]any, indent int) string {
 		switch val := v.(type) {
 		case map[string]any:
 			out.WriteString(fmt.Sprintf("%smap %s = {\n", ind, k))
-			out.WriteString(renderAsDML(val, indent+1))
-			out.WriteString(fmt.Sprintf("%s};\n\n", ind))
+            keys := make([]string, 0, len(val))
+            for k := range val {
+                keys = append(keys, k)
+            }
+            sort.Strings(keys)
+
+            for i, subk := range keys {
+                subv := val[subk]
+                comma := ""
+                if i < len(keys)-1 {
+                    comma = ","
+                }
+
+                switch subv := subv.(type) {
+                case string:
+                    out.WriteString(fmt.Sprintf("%s  \"%s\": \"%s\"%s\n", ind, subk, subv, comma))
+                case float64, int:
+                    out.WriteString(fmt.Sprintf("%s  \"%s\": %v%s\n", ind, subk, subv, comma))
+                case bool:
+                    out.WriteString(fmt.Sprintf("%s  \"%s\": %v%s\n", ind, subk, subv, comma))
+                default:
+                    out.WriteString(fmt.Sprintf("%s  \"%s\": \"%v\"%s\n", ind, subk, subv, comma))
+                }
+            }
+
+            out.WriteString(fmt.Sprintf("%s};\n\n", ind))
 		case string:
 			out.WriteString(fmt.Sprintf("%sstring %s = \"%s\";\n", ind, k, val))
 		case float64:
@@ -256,17 +285,25 @@ func (c *Config) ValidateState(requiredKeys []string, expectedTypes map[string]s
     }
 }
 
-func SetDefaultsToFile(file string, defaults map[string]any) error {
+func SetDefaultsToFile(file string, defaults map[string]any, forceOverride bool) error {
 	cfg, err := NewConfig(file)
 	if err != nil {
 		return err
 	}
 
-	updated := false
+	fmt.Printf("📦 Current config data: %#v\n", cfg.data)
+
+	var defaultKeys []string
 	for key, defValue := range defaults {
-		if _, ok := cfg.resolveNestedKey(key); !ok {
+		if forceOverride {
 			setNestedKey(cfg.data, key, defValue)
-			updated = true
+			defaultKeys = append(defaultKeys, key)
+		} else {
+			val, exists := cfg.resolveNestedKey(key)
+			if !exists || isZero(val) {
+				setNestedKey(cfg.data, key, defValue)
+				defaultKeys = append(defaultKeys, key)
+			}
 		}
 	}
 
@@ -283,9 +320,17 @@ func SetDefaultsToFile(file string, defaults map[string]any) error {
 	return os.WriteFile(file, output, 0644)
 }
 
+func (c *Config) SetMetaDefaults(keys []string) {
+	c.defaultKeys = make(map[string]bool)
+	for _, k := range keys {
+		c.defaultKeys[k] = true
+	}
+}
 
 func setNestedKey(data map[string]any, key string, value any) {
 	parts := strings.Split(key, ".")
+	last := parts[len(parts)-1]
+
 	for i := 0; i < len(parts)-1; i++ {
 		part := parts[i]
 
@@ -293,11 +338,30 @@ func setNestedKey(data map[string]any, key string, value any) {
 			data[part] = map[string]any{}
 		}
 
-		if next, ok := data[part].(map[string]any); ok {
-			data = next
-		} else {
-			return 
-        }
-        data[parts[len(parts)-1]] = value
-    }
+		next, ok := data[part].(map[string]any)
+		if !ok {
+			return
+		}
+		data = next
+	}
+
+	data[last] = value
 }
+
+func isZero(val any) bool {
+	switch v := val.(type) {
+	case string:
+		return v == ""
+	case float64:
+		return v == 0
+	case bool:
+		return !v
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	default:
+		return val == nil
+	}
+}
+

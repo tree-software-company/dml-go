@@ -322,13 +322,6 @@ func SetDefaultsToFile(file string, defaults map[string]any, forceOverride bool)
 	return nil
 }
 
-func (c *Config) SetMetaDefaults(keys []string) {
-	c.defaultKeys = make(map[string]bool)
-	for _, k := range keys {
-		c.defaultKeys[k] = true
-	}
-}
-
 
 func (c *Config) SetMetaDefaults(keys []string) {
 	c.defaultKeys = make(map[string]bool)

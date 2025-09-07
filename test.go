@@ -11,13 +11,11 @@ func main() {
 		"server.port":    "test5",
 		"server.timeout": "test2",
 		"name":"MyApp",
-	}, false) 
+	}, true)
 
 	if err != nil {
 		log.Fatal("❌ Failed to apply defaults:", err)
 	}
-
-	cfg, err := dml.NewConfig("testdata/example.dml")
 
 	if err != nil {
 		log.Fatal(err)

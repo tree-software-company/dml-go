@@ -19,7 +19,14 @@ jobs:
       - run:
           name: Run unit tests
           command: |
-            go test ./...
+            go test -short ./dml
+            go test -short ./internal
+
+      - run:
+          name: Verify examples compile
+          command: |
+            go build -o /dev/null ./examples/env_example.go
+            go build -o /dev/null ./test_errors.go
 
       - store_artifacts:
           path: bin

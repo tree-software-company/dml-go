@@ -5,9 +5,11 @@
 It supports:
 
 - ✅ Nested structures (`server.port`)
-- ✅ Typed access with simple API (`GetString`, `GetNumber`, `GetBool`, `GetList`, `GetMap`)
+- ✅ Typed access with simple API (`GetString`, `GetInt`, `GetFloat`, `GetBool`, `GetList`, `GetMap`)
 - ✅ **Advanced error handling with precise line and column reporting**
 - ✅ **Type validation and syntax checking**
+- ✅ **Environment variable interpolation and management**
+- ✅ **12-factor app support with .env files**
 - ✅ Validation of required keys and types
 - ✅ In-memory caching for faster reads
 - ✅ Manual reload and clear cache functionality
@@ -97,6 +99,197 @@ Then open:
 `http://localhost:8080/api/hello`
 
 ✅ You will see: `"👋 Hello from DML-configured server!"`
+
+---
+
+## 🌍 Environment Variables Integration
+
+DML-Go provides powerful environment variable support for 12-factor apps.
+
+### Loading .env Files
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+
+    "github.com/tree-software-company/dml-go/dml"
+)
+
+func main() {
+    // Load .env file
+    if err := dml.LoadEnv(".env"); err != nil {
+        log.Fatal(err)
+    }
+
+    // Or load only if exists (no error if missing)
+    if err := dml.LoadEnvIfExists(".env"); err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Println("✅ Environment variables loaded!")
+}
+```
+
+### Example `.env` file
+
+```env
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=admin
+DB_PASSWORD=secret123
+DB_NAME=myapp
+APP_NAME=DML-Go App
+APP_ENV=production
+API_KEY=your-api-key-here
+```
+
+---
+
+### Environment Variable Interpolation
+
+Use `${VAR_NAME}` syntax in your DML files:
+
+```dml
+// config.dml with environment variables
+string db_host = "${DB_HOST}";
+int db_port = 5432;
+string db_user = "${DB_USER}";
+string db_password = "${DB_PASSWORD}";
+string db_name = "${DB_NAME}";
+
+// Interpolation works in complex strings too
+string db_url = "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}";
+
+string app_name = "${APP_NAME}";
+string api_key = "${API_KEY}";
+
+// Lists with env vars
+list allowed_hosts = ["localhost", "${DB_HOST}", "example.com"];
+```
+
+**Load and expand variables:**
+
+```go
+// Load environment variables first
+dml.LoadEnv(".env")
+
+// Load DML config
+cfg, err := dml.NewConfig("config.dml")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Expand environment variables in config
+cfg.LoadWithEnv()
+
+// Access expanded values
+fmt.Println(cfg.GetString("db_url"))
+// Output: postgresql://admin:secret123@localhost:5432/myapp
+```
+
+---
+
+### Environment Variable Helpers
+
+```go
+// Get environment variable with default value
+timeout := dml.GetEnv("REQUEST_TIMEOUT", "30")
+
+// Get environment variable or panic if not set
+apiKey := dml.MustGetEnv("API_KEY")
+
+// Expand environment variables in any string
+url := dml.ExpandEnv("https://${HOST}:${PORT}/api")
+```
+
+---
+
+### Setting Environment Defaults from Config
+
+```go
+cfg, _ := dml.NewConfig("config.dml")
+
+// Set environment variables from config with prefix
+cfg.SetEnvDefaults("SERVER")
+// Sets: SERVER_PORT, SERVER_HOST, SERVER_TIMEOUT, etc.
+```
+
+---
+
+### Override Config from Environment
+
+```go
+cfg, _ := dml.NewConfig("config.dml")
+
+// Override config values from environment variables
+// Will look for env vars matching config keys (uppercase)
+cfg.EnvOverride("")
+
+// With prefix: APP_PORT, APP_DEBUG, etc.
+cfg.EnvOverride("APP")
+```
+
+**Example:**
+
+```go
+// config.dml
+int port = 8080;
+bool debug = true;
+
+// Set environment variables
+os.Setenv("PORT", "9000")
+os.Setenv("DEBUG", "false")
+
+// Override from environment
+cfg.EnvOverride("")
+
+// Values are now from environment
+fmt.Println(cfg.GetInt("port"))   // 9000
+fmt.Println(cfg.GetBool("debug")) // false
+```
+
+---
+
+### Full 12-Factor App Example
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+
+    "github.com/tree-software-company/dml-go/dml"
+)
+
+func main() {
+    // 1. Load .env file (development)
+    if err := dml.LoadEnvIfExists(".env"); err != nil {
+        log.Fatal(err)
+    }
+
+    // 2. Load DML config
+    cfg, err := dml.NewConfig("config.dml")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // 3. Expand environment variables
+    cfg.LoadWithEnv()
+
+    // 4. Override from environment (production overrides)
+    cfg.EnvOverride("")
+
+    // 5. Use configuration
+    fmt.Printf("🚀 Starting %s\n", cfg.GetString("app_name"))
+    fmt.Printf("🌍 Environment: %s\n", dml.GetEnv("APP_ENV", "development"))
+    fmt.Printf("💾 Database: %s\n", cfg.GetString("db_host"))
+    fmt.Printf("🔌 Port: %d\n", cfg.GetInt("port"))
+}
+```
 
 ---
 

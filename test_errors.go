@@ -4,7 +4,7 @@ import (
     "fmt"
     "os"
     
-    "github.com/tree/dml-go/dml"
+    "github.com/tree-software-company/dml-go/dml" 
 )
 
 func main() {
@@ -12,19 +12,19 @@ func main() {
     
     fmt.Println("Test 1: Invalid string format")
     testError(`string name = invalid;`)
-
+    
     fmt.Println("\nTest 2: Invalid integer")
     testError(`int age = abc;`)
-
+    
     fmt.Println("\nTest 3: Invalid identifier")
     testError(`string 123name = "test";`)
-    
+
     fmt.Println("\nTest 4: Unknown type")
     testError(`unknown value = "test";`)
 
     fmt.Println("\nTest 5: Invalid boolean")
     testError(`bool active = yes;`)
-
+    
     fmt.Println("\nTest 6: Valid config (should succeed)")
     testValid()
 }

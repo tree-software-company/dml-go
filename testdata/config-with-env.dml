@@ -1,0 +1,26 @@
+string db_host = "${DB_HOST}";
+int db_port = 5432;
+string db_user = "${DB_USER}";
+string db_password = "${DB_PASSWORD}";
+string db_name = "${DB_NAME}";
+string db_url = "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}";
+
+string app_name = "${APP_NAME}";
+string app_env = "${APP_ENV}";
+bool app_debug = true;
+int app_port = 8080;
+
+string api_key = "${API_KEY}";
+string api_url = "https://api.example.com";
+string api_version = "v1";
+
+string redis_host = "${REDIS_HOST}";
+string redis_port = "${REDIS_PORT}";
+string redis_password = "${REDIS_PASSWORD}";
+
+string smtp_host = "${SMTP_HOST}";
+string smtp_port = "${SMTP_PORT}";
+string smtp_user = "${SMTP_USER}";
+
+list allowed_hosts = ["localhost", "${DB_HOST}", "example.com"];
+string base_url = "https://${APP_NAME}.com";

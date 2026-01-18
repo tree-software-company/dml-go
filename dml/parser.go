@@ -213,8 +213,12 @@ func (c *Config) parseMap(value string, lineNum, col int, line string) (map[stri
             )
         }
         
-        key := strings.TrimSpace(strings.Trim(kv[0], `"`))
-        val := strings.TrimSpace(strings.Trim(kv[1], `"`))
+        key := strings.TrimSpace(kv[0])
+        key = strings.Trim(key, `"'`)
+        
+        val := strings.TrimSpace(kv[1])
+        val = strings.Trim(val, `"'`)
+        
         result[key] = val
     }
     

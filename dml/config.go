@@ -1,22 +1,89 @@
 package dml
 
 import (
+    "encoding/json"
     "fmt"
-    "sort"
-	"reflect"
-	"strings"
     "os"
+    "reflect"
+    "sort"
+    "strings"
+    "sync"
 )
 
+var (
+    configCache = make(map[string]map[string]any)
+    cacheMutex  sync.RWMutex
+)
+
+func Cache(filepath string) (map[string]any, error) {
+    cacheMutex.RLock()
+    if cached, exists := configCache[filepath]; exists {
+        cacheMutex.RUnlock()
+        return cached, nil
+    }
+    cacheMutex.RUnlock()
+
+    content, err := os.ReadFile(filepath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read file: %w", err)
+    }
+
+    cfg := New()
+    if err := cfg.Parse(string(content)); err != nil {
+        return nil, err
+    }
+
+    cacheMutex.Lock()
+    configCache[filepath] = cfg.data
+    cacheMutex.Unlock()
+
+    return cfg.data, nil
+}
+
+func Reload(filepath string) (map[string]any, error) {
+    cacheMutex.Lock()
+    delete(configCache, filepath)
+    cacheMutex.Unlock()
+
+    return Cache(filepath)
+}
+
+func ClearCache() {
+    cacheMutex.Lock()
+    configCache = make(map[string]map[string]any)
+    cacheMutex.Unlock()
+}
+
+func Load(filepath string) (map[string]any, error) {
+    content, err := os.ReadFile(filepath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read file: %w", err)
+    }
+
+    cfg := New()
+    if err := cfg.Parse(string(content)); err != nil {
+        return nil, err
+    }
+
+    return cfg.data, nil
+}
+
 type Config struct {
-	data        map[string]any
-	defaultKeys map[string]bool
+    data        map[string]any
+    defaultKeys map[string]bool
 }
 
 type ValidationResult struct {
     MissingKeys []string
     WrongTypes  []string
     IsValid     bool
+}
+
+func New() *Config {
+    return &Config{
+        data:        make(map[string]any),
+        defaultKeys: make(map[string]bool),
+    }
 }
 
 func NewConfig(filename string) (*Config, error) {
@@ -29,11 +96,14 @@ func NewConfig(filename string) (*Config, error) {
         parsed = make(map[string]any)
     }
 
-    return &Config{data: parsed}, nil
+    return &Config{
+        data:        parsed,
+        defaultKeys: make(map[string]bool),
+    }, nil
 }
 
 func (c *Config) GetString(key string) string {
-    if val, ok := c.data[key]; ok {
+    if val, ok := c.resolveNestedKey(key); ok {
         if str, ok := val.(string); ok {
             return str
         }
@@ -41,18 +111,36 @@ func (c *Config) GetString(key string) string {
     return ""
 }
 
-func (c *Config) GetNumber(key string) float64 {
+func (c *Config) GetInt(key string) int {
     if val, ok := c.resolveNestedKey(key); ok {
-        if f, ok := val.(float64); ok {
-            return f
+        switch v := val.(type) {
+        case int:
+            return v
+        case float64:
+            return int(v)
         }
     }
     return 0
 }
 
+func (c *Config) GetFloat(key string) float64 {
+    if val, ok := c.resolveNestedKey(key); ok {
+        switch v := val.(type) {
+        case float64:
+            return v
+        case int:
+            return float64(v)
+        }
+    }
+    return 0.0
+}
+
+func (c *Config) GetNumber(key string) float64 {
+    return c.GetFloat(key)
+}
 
 func (c *Config) GetBool(key string) bool {
-    if val, ok := c.data[key]; ok {
+    if val, ok := c.resolveNestedKey(key); ok {
         if b, ok := val.(bool); ok {
             return b
         }
@@ -61,7 +149,7 @@ func (c *Config) GetBool(key string) bool {
 }
 
 func (c *Config) GetList(key string) []any {
-    if val, ok := c.data[key]; ok {
+    if val, ok := c.resolveNestedKey(key); ok {
         if list, ok := val.([]any); ok {
             return list
         }
@@ -70,7 +158,7 @@ func (c *Config) GetList(key string) []any {
 }
 
 func (c *Config) GetMap(key string) map[string]any {
-    if val, ok := c.data[key]; ok {
+    if val, ok := c.resolveNestedKey(key); ok {
         if m, ok := val.(map[string]any); ok {
             return m
         }
@@ -79,7 +167,7 @@ func (c *Config) GetMap(key string) map[string]any {
 }
 
 func (c *Config) MustString(key string) string {
-    if val, ok := c.data[key]; ok {
+    if val, ok := c.resolveNestedKey(key); ok {
         if str, ok := val.(string); ok {
             return str
         }
@@ -87,8 +175,41 @@ func (c *Config) MustString(key string) string {
     panic(fmt.Sprintf("❌ Missing required string key: '%s'", key))
 }
 
+func (c *Config) MustInt(key string) int {
+    if val, ok := c.resolveNestedKey(key); ok {
+        switch v := val.(type) {
+        case int:
+            return v
+        case float64:
+            return int(v)
+        }
+    }
+    panic(fmt.Sprintf("❌ Missing required int key: '%s'", key))
+}
+
+func (c *Config) MustFloat(key string) float64 {
+    if val, ok := c.resolveNestedKey(key); ok {
+        switch v := val.(type) {
+        case float64:
+            return v
+        case int:
+            return float64(v)
+        }
+    }
+    panic(fmt.Sprintf("❌ Missing required float key: '%s'", key))
+}
+
+func (c *Config) MustBool(key string) bool {
+    if val, ok := c.resolveNestedKey(key); ok {
+        if b, ok := val.(bool); ok {
+            return b
+        }
+    }
+    panic(fmt.Sprintf("❌ Missing required bool key: '%s'", key))
+}
+
 func (c *Config) Has(key string) bool {
-    _, ok := c.data[key]
+    _, ok := c.resolveNestedKey(key)
     return ok
 }
 
@@ -102,17 +223,17 @@ func (c *Config) Keys() []string {
 }
 
 func (c *Config) Dump() string {
-	return renderAsDML(c.data, 0)
+    return renderAsDML(c.data, 0)
 }
 
 func renderAsDML(data map[string]any, indent int) string {
-	ind := strings.Repeat("  ", indent)
-	var out strings.Builder
+    ind := strings.Repeat("  ", indent)
+    var out strings.Builder
 
-	for k, v := range data {
-		switch val := v.(type) {
-		case map[string]any:
-			out.WriteString(fmt.Sprintf("%smap %s = {\n", ind, k))
+    for k, v := range data {
+        switch val := v.(type) {
+        case map[string]any:
+            out.WriteString(fmt.Sprintf("%smap %s = {\n", ind, k))
             keys := make([]string, 0, len(val))
             for k := range val {
                 keys = append(keys, k)
@@ -139,39 +260,39 @@ func renderAsDML(data map[string]any, indent int) string {
             }
 
             out.WriteString(fmt.Sprintf("%s};\n\n", ind))
-		case string:
-			out.WriteString(fmt.Sprintf("%sstring %s = \"%s\";\n", ind, k, val))
-		case float64:
-			out.WriteString(fmt.Sprintf("%snumber %s = %v;\n", ind, k, val))
-		case bool:
-			out.WriteString(fmt.Sprintf("%sboolean %s = %v;\n", ind, k, val))
-		case []any:
-			out.WriteString(fmt.Sprintf("%slist %s = [", ind, k))
-			for i, item := range val {
-				if i > 0 {
-					out.WriteString(", ")
-				}
-				switch item := item.(type) {
-				case string:
-					out.WriteString(fmt.Sprintf("\"%s\"", item))
-				default:
-					out.WriteString(fmt.Sprintf("%v", item))
-				}
-			}
-			out.WriteString("];\n")
-		default:
-			out.WriteString(fmt.Sprintf("%s %s = %v;\n", ind, k, val))
-		}
-	}
+        case string:
+            out.WriteString(fmt.Sprintf("%sstring %s = \"%s\";\n", ind, k, val))
+        case float64:
+            out.WriteString(fmt.Sprintf("%snumber %s = %v;\n", ind, k, val))
+        case bool:
+            out.WriteString(fmt.Sprintf("%sboolean %s = %v;\n", ind, k, val))
+        case []any:
+            out.WriteString(fmt.Sprintf("%slist %s = [", ind, k))
+            for i, item := range val {
+                if i > 0 {
+                    out.WriteString(", ")
+                }
+                switch item := item.(type) {
+                case string:
+                    out.WriteString(fmt.Sprintf("\"%s\"", item))
+                default:
+                    out.WriteString(fmt.Sprintf("%v", item))
+                }
+            }
+            out.WriteString("];\n")
+        default:
+            out.WriteString(fmt.Sprintf("%s %s = %v;\n", ind, k, val))
+        }
+    }
 
-	return out.String()
+    return out.String()
 }
 
 func (c *Config) ValidateRequired(keys ...string) error {
     missing := []string{}
 
     for _, key := range keys {
-        if _, ok := c.data[key]; !ok {
+        if _, ok := c.resolveNestedKey(key); !ok {
             missing = append(missing, key)
         }
     }
@@ -187,7 +308,7 @@ func (c *Config) ValidateRequiredTyped(rules map[string]string) error {
     wrongType := []string{}
 
     for key, expectedType := range rules {
-        val, ok := c.data[key]
+        val, ok := c.resolveNestedKey(key)
         if !ok {
             missing = append(missing, key)
             continue
@@ -229,22 +350,21 @@ func joinWithNewlines(list []string) string {
 }
 
 func (c *Config) resolveNestedKey(key string) (any, bool) {
-	parts := strings.Split(key, ".")
-	var current any = c.data
+    parts := strings.Split(key, ".")
+    var current any = c.data
 
-	for _, part := range parts {
-		if m, ok := current.(map[string]any); ok {
-			current, ok = m[part]
-			if !ok {
-				return nil, false
-			}
-		} else {
-			return nil, false
-		}
-	}
-	return current, true
+    for _, part := range parts {
+        if m, ok := current.(map[string]any); ok {
+            current, ok = m[part]
+            if !ok {
+                return nil, false
+            }
+        } else {
+            return nil, false
+        }
+    }
+    return current, true
 }
-
 
 func (c *Config) MissedKeys(required []string) []string {
     var missing []string
@@ -286,85 +406,127 @@ func (c *Config) ValidateState(requiredKeys []string, expectedTypes map[string]s
 }
 
 func SetDefaultsToFile(file string, defaults map[string]any, forceOverride bool) error {
-	cfg, err := NewConfig(file)
+    cfg, err := NewConfig(file)
 
-	if err != nil {
-		fmt.Printf("⚠️ Creating new config (could not read '%s'): %v\n", file, err)
-		cfg = &Config{data: make(map[string]any)}
-	} else if cfg.data == nil {
-		cfg.data = make(map[string]any)
-	}
+    if err != nil {
+        fmt.Printf("⚠️ Creating new config (could not read '%s'): %v\n", file, err)
+        cfg = &Config{data: make(map[string]any)}
+    } else if cfg.data == nil {
+        cfg.data = make(map[string]any)
+    }
 
-	var defaultKeys []string
-	for key, defValue := range defaults {
-		if forceOverride {
-			setNestedKey(cfg.data, key, defValue)
-			defaultKeys = append(defaultKeys, key)
-		} else {
-			val, exists := cfg.resolveNestedKey(key)
-			if !exists || isZero(val) {
-				setNestedKey(cfg.data, key, defValue)
-				defaultKeys = append(defaultKeys, key)
-			}
+    var defaultKeys []string
+    for key, defValue := range defaults {
+        if forceOverride {
+            setNestedKey(cfg.data, key, defValue)
+            defaultKeys = append(defaultKeys, key)
+        } else {
+            val, exists := cfg.resolveNestedKey(key)
+            if !exists || isZero(val) {
+                setNestedKey(cfg.data, key, defValue)
+                defaultKeys = append(defaultKeys, key)
+            }
+        }
+    }
 
-		}
-	}
+    cfg.SetMetaDefaults(defaultKeys)
 
-	cfg.SetMetaDefaults(defaultKeys)
+    output := cfg.Dump()
+    err = os.WriteFile(file, []byte(output), 0644)
+    if err != nil {
+        return fmt.Errorf("❌ Failed to write file: %w", err)
+    }
 
-	output := cfg.Dump()
-	err = os.WriteFile(file, []byte(output), 0644)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to write file: %w", err)
-	}
-
-	fmt.Println("✅ Defaults applied and saved to", file)
-	return nil
+    fmt.Println("✅ Defaults applied and saved to", file)
+    return nil
 }
 
-
 func (c *Config) SetMetaDefaults(keys []string) {
-	c.defaultKeys = make(map[string]bool)
-	for _, k := range keys {
-		c.defaultKeys[k] = true
-	}
+    c.defaultKeys = make(map[string]bool)
+    for _, k := range keys {
+        c.defaultKeys[k] = true
+    }
 }
 
 func setNestedKey(data map[string]any, key string, value any) {
-	parts := strings.Split(key, ".")
-	last := parts[len(parts)-1]
+    parts := strings.Split(key, ".")
+    last := parts[len(parts)-1]
 
-	for i := 0; i < len(parts)-1; i++ {
-		part := parts[i]
+    for i := 0; i < len(parts)-1; i++ {
+        part := parts[i]
 
-		if _, ok := data[part]; !ok {
-			data[part] = map[string]any{}
-		}
+        if _, ok := data[part]; !ok {
+            data[part] = map[string]any{}
+        }
 
-		next, ok := data[part].(map[string]any)
-		if !ok {
-			return
-		}
-		data = next
-	}
+        next, ok := data[part].(map[string]any)
+        if !ok {
+            return
+        }
+        data = next
+    }
 
-	data[last] = value
+    data[last] = value
 }
 
 func isZero(val any) bool {
-	switch v := val.(type) {
-	case string:
-		return v == ""
-	case float64:
-		return v == 0
-	case bool:
-		return !v
-	case []any:
-		return len(v) == 0
-	case map[string]any:
-		return len(v) == 0
-	default:
-		return val == nil
-	}
+    switch v := val.(type) {
+    case string:
+        return v == ""
+    case float64:
+        return v == 0
+    case bool:
+        return !v
+    case []any:
+        return len(v) == 0
+    case map[string]any:
+        return len(v) == 0
+    default:
+        return val == nil
+    }
+}
+
+func (c *Config) Set(key string, value any) {
+    setNestedKey(c.data, key, value)
+}
+
+func (c *Config) Delete(key string) {
+    if !strings.Contains(key, ".") {
+        delete(c.data, key)
+        return
+    }
+
+    parts := strings.Split(key, ".")
+    var current any = c.data
+
+    for i := 0; i < len(parts)-1; i++ {
+        if m, ok := current.(map[string]any); ok {
+            current = m[parts[i]]
+        } else {
+            return
+        }
+    }
+
+    if m, ok := current.(map[string]any); ok {
+        delete(m, parts[len(parts)-1])
+    }
+}
+
+func (c *Config) Merge(other *Config) {
+    for k, v := range other.data {
+        c.data[k] = v
+    }
+}
+
+func (c *Config) Clone() *Config {
+    newCfg := New()
+    data, _ := json.Marshal(c.data)
+    json.Unmarshal(data, &newCfg.data)
+    return newCfg
+}
+
+func (c *Config) get(key string) any {
+    val, _ := c.resolveNestedKey(key)
+    return val
 }
 

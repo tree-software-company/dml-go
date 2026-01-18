@@ -1,0 +1,11 @@
+string valid_name = "John";
+
+string invalid_string = John;
+
+int invalid_int = abc;
+
+bool invalid_bool = yes;
+
+string 123invalid = "test";
+
+unknown_type value = "test";

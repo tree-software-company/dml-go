@@ -1,23 +1,27 @@
 package main
 
 import (
-    "fmt"
-    "log"
-    "os"
+	"fmt"
+	"os"
 
-    "github.com/tree-software-company/dml-go/dml"
+	"github.com/tree-software-company/dml-go/dml"
 )
 
 func main() {
-    if len(os.Args) < 3 || os.Args[1] != "read" {
-        fmt.Println("Usage: dml read <file.dml>")
-        os.Exit(1)
-    }
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: dml <file.dml>")
+		os.Exit(1)
+	}
 
-    result, err := dml.Parse(os.Args[2])
-    if err != nil {
-        log.Fatal(err)
-    }
+	filepath := os.Args[1]
 
-    fmt.Printf("📄 Output:\n%v\n", result)
+	cfg, err := dml.NewConfig(filepath)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✅ DML file parsed successfully!")
+	fmt.Println("\n📄 Config dump:")
+	fmt.Println(cfg.Dump())
 }

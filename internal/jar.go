@@ -11,8 +11,8 @@ import (
 )
 
 const (
-    jarURL    = "https://github.com/tree-software-company/DML/releases/download/0.5.1/DML-all.jar"
-    jarSHA256 = "c4482630cff346c671813173e579e6202c520d62a301b50326948f20d3ab6891"
+    jarURL    = "https://github.com/tree-software-company/DML/releases/download/0.6.1/DML-all.jar"
+    jarSHA256 = "8748864bcb9805b63faad317b46bc5ba73c322b04ebef87b5e6673f7f3089293"
     jarName   = "DML-all.jar"
 )
 

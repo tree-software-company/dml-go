@@ -508,6 +508,57 @@ go tool cover -html=coverage.out
 go run test_errors.go
 ```
 
+
+## 🧰 Lint — static DML checks
+
+A simple file-based linter was added to catch common DML mistakes early.
+
+- Function: `func Lint(file string) ([]LintIssue, error)`
+- Type:
+  ```go
+  type LintIssue struct {
+    Level   string // "error" | "warning"
+    Code    string // MAP_TRAILING_COMMA, MIXED_MAP_STYLE, TYPED_MAP_ENTRY, UNUSED_DEFAULT, EMPTY_MAP, MAP_UNCLOSED
+    Message string
+    Line    int
+  }
+  ```
+
+Checks performed:
+- ❌ MAP_TRAILING_COMMA — trailing comma after last map element
+- ❌ TYPED_MAP_ENTRY — typed entries inside maps (e.g. `string port = ...`)
+- ⚠️ MIXED_MAP_STYLE — mixed style: maps and root-level vars used together
+- ⚠️ UNUSED_DEFAULT — default declarations that are never used
+- ⚠️ EMPTY_MAP — empty maps (e.g. `server = {}`)
+- ❌ MAP_UNCLOSED — unclosed map (missing `}`)
+
+Usage example:
+
+```go
+issues, err := dml.Lint("testdata/config.dml")
+if err != nil {
+  log.Fatal(err)
+}
+for _, it := range issues {
+  fmt.Printf("%s: %s (code=%s) line=%d\n", it.Level, it.Message, it.Code, it.Line)
+}
+```
+
+Files:
+- Implementation: `dml/lint.go`
+- Tests: `dml/lint_test.go`
+
+Run linter tests:
+
+```bash
+cd /Users/szymonmastalerz/Documents/_prywatne-studia/tree/dml-go
+go test ./dml -run TestLint_BasicChecks -v
+# or run all tests
+go test ./... -v
+```
+
+Consider adding a CLI command or CI job to run `Lint` on DML files to prevent common config bugs before deployment.
+
 ### Test Coverage
 
 The library includes comprehensive tests for:

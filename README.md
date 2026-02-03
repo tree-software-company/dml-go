@@ -10,6 +10,8 @@ It supports:
 - ✅ **Type validation and syntax checking**
 - ✅ **Environment variable interpolation and management**
 - ✅ **12-factor app support with .env files**
+- ✅ **Enforced map style (JSON/Flat/Auto) for consistent output**
+- ✅ **Smart default policies for configuration management**
 - ✅ Validation of required keys and types
 - ✅ In-memory caching for faster reads
 - ✅ Manual reload and clear cache functionality
@@ -99,6 +101,302 @@ Then open:
 `http://localhost:8080/api/hello`
 
 ✅ You will see: `"👋 Hello from DML-configured server!"`
+
+---
+
+## 🎯 Default Policies
+
+DML-Go provides a powerful and flexible system for applying default values to configurations. Instead of scattered boolean flags, use a single `DefaultPolicy` struct.
+
+### The Problem
+
+Before:
+```go
+// ❌ Hard to understand, easy to make mistakes
+ApplyDefaults(file, defaults, true, false, true, false)
+// What does each boolean mean? 🤔
+```
+
+After:
+```go
+// ✅ Crystal clear intentions
+dml.ApplyDefaults(file, defaults, dml.DefaultPolicy{
+    OnlyMissing: true,
+    StrictTypes: true,
+})
+```
+
+### DefaultPolicy Structure
+
+```go
+type DefaultPolicy struct {
+    Override      bool // Override existing values
+    StrictTypes   bool // Enforce type matching
+    OnlyMissing   bool // Only set values that don't exist
+    SkipIfPresent bool // Skip if any value is already present
+}
+```
+
+### Predefined Policies
+
+DML-Go includes three ready-to-use policies:
+
+#### 1. **Permissive Policy** - Override Everything
+
+```go
+dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyPermissive)
+```
+
+**Behavior:**
+- ✅ Overrides all existing values
+- ✅ No type checking
+- ✅ Always applies defaults
+- ⚠️ Use with caution in production
+
+**Use case:** Development, testing, resetting configuration
+
+#### 2. **Strict Policy** - Safe Defaults Only
+
+```go
+dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyStrict)
+```
+
+**Behavior:**
+- ✅ Only adds missing values
+- ✅ Enforces type matching
+- ✅ Never overrides existing values
+- ✅ Production-safe
+
+**Use case:** Production deployments, safe migrations
+
+#### 3. **Conservative Policy** - Skip if Present
+
+```go
+dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyConservative)
+```
+
+**Behavior:**
+- ✅ Skips if ANY value exists
+- ✅ Type checking enabled
+- ✅ Preserves existing configurations
+- ✅ Ultra-safe
+
+**Use case:** First-time initialization only
+
+### Custom Policies
+
+Create your own policy for specific needs:
+
+```go
+customPolicy := dml.DefaultPolicy{
+    Override:      false,  // Don't overwrite
+    StrictTypes:   true,   // Match types
+    OnlyMissing:   true,   // Only add missing
+    SkipIfPresent: false,  // Don't skip on existing
+}
+
+dml.ApplyDefaults("config.dml", defaults, customPolicy)
+```
+
+### Real-World Examples
+
+#### Example 1: Initialize New Configuration
+
+```go
+defaults := map[string]any{
+    "port":           8080,
+    "timeout":        30,
+    "debug":          false,
+    "maxConnections": 100,
+}
+
+// Use permissive for first-time setup
+err := dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyPermissive)
+```
+
+#### Example 2: Add Missing Settings to Production
+
+```go
+newDefaults := map[string]any{
+    "cacheEnabled":  true,
+    "cacheTTL":      3600,
+    "rateLimitRPS":  100,
+}
+
+// Use strict to avoid breaking existing config
+err := dml.ApplyDefaults("production.dml", newDefaults, dml.DefaultPolicyStrict)
+```
+
+#### Example 3: Conditional Initialization
+
+```go
+defaults := map[string]any{
+    "firstRun": true,
+    "version":  "1.0.0",
+}
+
+// Only apply if config is completely empty
+err := dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyConservative)
+```
+
+#### Example 4: Type-Safe Migration
+
+```go
+// Current config has: port = 8080 (int)
+// This will FAIL because of type mismatch
+defaults := map[string]any{
+    "port": "9000", // ❌ string instead of int
+}
+
+err := dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicy{
+    StrictTypes: true,
+    Override:    true,
+})
+// Error: type mismatch for key 'port': expected int, got string
+```
+
+### Policy Comparison Table
+
+| Policy          | Override | StrictTypes | OnlyMissing | SkipIfPresent | Best For                    |
+| --------------- | -------- | ----------- | ----------- | ------------- | --------------------------- |
+| **Permissive**  | ✅       | ❌          | ❌          | ❌            | Development, testing        |
+| **Strict**      | ❌       | ✅          | ✅          | ❌            | Production, safe updates    |
+| **Conservative**| ❌       | ✅          | ❌          | ✅            | First-time initialization   |
+| **Custom**      | 🎛️       | 🎛️          | 🎛️          | 🎛️            | Specific requirements       |
+
+### Testing Policies
+
+```go
+package main
+
+import (
+    "testing"
+    "github.com/tree-software-company/dml-go/dml"
+)
+
+func TestDefaultPolicies(t *testing.T) {
+    // Test permissive
+    defaults := map[string]any{"port": 9000}
+    err := dml.ApplyDefaults("test.dml", defaults, dml.DefaultPolicyPermissive)
+    // Should override existing port value
+
+    // Test strict
+    err = dml.ApplyDefaults("test.dml", defaults, dml.DefaultPolicyStrict)
+    // Should keep existing port value
+
+    // Test conservative
+    err = dml.ApplyDefaults("test.dml", defaults, dml.DefaultPolicyConservative)
+    // Should skip entirely if any value exists
+}
+```
+
+### Error Handling
+
+```go
+defaults := map[string]any{
+    "port": "invalid", // Wrong type
+}
+
+err := dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyStrict)
+if err != nil {
+    // Error: type mismatch for key 'port': expected int, got string
+    log.Printf("Policy violation: %v", err)
+}
+```
+
+---
+
+## 🎨 Map Style Control
+
+DML-Go gives you full control over how configuration is dumped - no more surprises!
+
+### Global Map Style
+
+Set the style for all dumps:
+
+```go
+// Always use JSON-style maps
+dml.SetMapStyle(dml.MapStyleJSON)
+
+cfg := dml.New()
+cfg.Set("server.port", 8080)
+cfg.Set("server.host", "localhost")
+
+fmt.Println(cfg.Dump())
+```
+
+**Output:**
+```dml
+@mapStyle json
+
+map server = {
+  "host": "localhost",
+  "port": 8080
+};
+```
+
+### Available Styles
+
+| Style             | Behavior                               | Example                                    |
+| ----------------- | -------------------------------------- | ------------------------------------------ |
+| `MapStyleJSON`    | Always uses map syntax                 | `map server = { "port": 8080 };`           |
+| `MapStyleFlat`    | Always uses flat key-value syntax      | `number server.port = 8080;`               |
+| `MapStyleAuto`    | Automatically decides based on content | Smart decision based on complexity         |
+
+### Per-Config Override
+
+Override style for specific config instances:
+
+```go
+cfg := dml.New()
+cfg.SetMapStyle(dml.MapStyleFlat)
+cfg.Set("database.host", "localhost")
+cfg.Set("database.port", 5432)
+
+fmt.Println(cfg.Dump())
+```
+
+**Output:**
+```dml
+@mapStyle flat
+
+string database.host = "localhost";
+number database.port = 5432;
+```
+
+### DML File Directive
+
+Control style directly in `.dml` files:
+
+```dml
+@mapStyle json
+
+map server = {
+  "port": 8080,
+  "timeout": 30
+};
+```
+
+The parser respects the `@mapStyle` directive and maintains consistency.
+
+### Why Map Style Control?
+
+**Problem:** CLI tools might generate inconsistent output:
+```dml
+// Sometimes this:
+string server.port = "8080";
+
+// Sometimes this:
+map server = {
+  "port": 8080
+};
+```
+
+**Solution:** Enforce consistent style:
+```go
+dml.SetMapStyle(dml.MapStyleJSON)
+// Now ALWAYS generates map syntax - zero surprises! 🎯
+```
 
 ---
 
@@ -407,7 +705,9 @@ func main() {
 | `Reload(file string)`                               | Forces re-parsing and updates the cache for a file                 |
 | `ClearCache()`                                      | Clears all cached parsed files from memory                         |
 | `Watch(file)`                                       | Live reload of dml file                                            |
-| `SetDefaultsToFile(file, variables, isOverwriting)` | Change variables from files to go                                  |
+| `ApplyDefaults(file, defaults, policy)`             | Apply default values with policy control                           |
+| `SetMapStyle(style MapStyle)`                       | Sets global map dump style (JSON/Flat/Auto)                        |
+| `GetMapStyle()`                                     | Returns current global map style                                   |
 
 ### 🔹 `Config` methods
 
@@ -423,9 +723,18 @@ func main() {
 | `MustString(key string)`                         | Returns a string value or panics if missing                      |
 | `Has(key string)`                                | Checks if a key exists                                           |
 | `Keys()`                                         | Returns a sorted list of top-level keys                          |
-| `Dump()`                                         | Dumps the entire parsed data as formatted JSON                   |
+| `Dump()`                                         | Dumps the entire parsed data in DML format (respects map style)  |
+| `SetMapStyle(style MapStyle)`                    | Sets map style for this specific config                          |
 | `ValidateRequired(keys...)`                      | Validates that specific keys exist                               |
 | `ValidateRequiredTyped(rules map[string]string)` | Validates that keys exist and match expected types               |
+
+### 🔹 Default Policy Presets
+
+| Policy                    | Description                                      |
+| ------------------------- | ------------------------------------------------ |
+| `DefaultPolicyPermissive` | Override all, no type checking (dev/testing)     |
+| `DefaultPolicyStrict`     | Only missing, strict types (production-safe)     |
+| `DefaultPolicyConservative` | Skip if any present, strict types (ultra-safe) |
 
 ### 🔹 `Debug` methods
 
@@ -456,6 +765,9 @@ func main() {
 ## 📚 Example DML Features Supported
 
 ```dml
+// Control dump style with directive
+@mapStyle json
+
 // Strings must be in double quotes
 string title = "Hello World";
 
@@ -497,6 +809,9 @@ Run the test suite:
 # Run all tests
 go test ./dml -v
 
+# Run specific tests
+go test ./dml -run TestDefaultPolicy -v
+
 # Run with coverage
 go test ./dml -cover
 
@@ -504,8 +819,16 @@ go test ./dml -cover
 go test ./dml -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
+# Run examples
+go run examples/policy_example.go
+go run examples/mapstyle_example.go
+go run examples/env_example.go
+
 # Run error handling demo
-go run test_errors.go
+go run tests/test_errors.go
+
+# Test map style functionality
+go run tests/test_mapstyle.go
 ```
 
 
@@ -570,6 +893,10 @@ The library includes comprehensive tests for:
 - ✅ Multi-line configurations
 - ✅ Comment handling
 - ✅ Error message formatting
+- ✅ Map style enforcement (JSON/Flat/Auto)
+- ✅ Default policy behavior (Permissive/Strict/Conservative)
+- ✅ Type-safe default application
+- ✅ Policy violation detection
 
 ---
 

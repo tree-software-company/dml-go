@@ -1,245 +1,453 @@
 package dml
 
 import (
-    "fmt"
-    "strconv"
-    "strings"
+	"fmt"
+	"strconv"
+	"strings"
 )
 
 func (c *Config) Parse(content string) error {
-    lines := strings.Split(content, "\n")
-    
-    for lineNum, line := range lines {
-        line = strings.TrimSpace(line)
-        
-        if line == "" || strings.HasPrefix(line, "//") {
-            continue
-        }
-        
-        line = strings.TrimSuffix(line, ";")
-        
-        if err := c.parseLine(line, lineNum+1, lines[lineNum]); err != nil {
-            return err
-        }
-    }
-    
-    return nil
+	lines := strings.Split(content, "\n")
+	var multiLineBuffer strings.Builder
+	var isInMultiLine bool
+	var multiLineStart int
+
+	for lineNum, line := range lines {
+		originalLine := line
+		line = strings.TrimSpace(line)
+
+		if !isInMultiLine && (line == "" || strings.HasPrefix(line, "//")) {
+			continue
+		}
+
+		if !isInMultiLine && strings.HasPrefix(line, "@") {
+			if err := c.parseDirective(line, lineNum+1); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if !isInMultiLine && (strings.Contains(line, "{") || strings.Contains(line, "[")) {
+			if !strings.HasSuffix(line, ";") {
+				isInMultiLine = true
+				multiLineStart = lineNum + 1
+				multiLineBuffer.WriteString(line)
+				multiLineBuffer.WriteString(" ")
+				continue
+			}
+		}
+
+		if isInMultiLine {
+			multiLineBuffer.WriteString(line)
+			multiLineBuffer.WriteString(" ")
+
+			if strings.HasSuffix(line, ";") {
+				fullLine := multiLineBuffer.String()
+				if err := c.parseLine(fullLine, multiLineStart, fullLine); err != nil {
+					return err
+				}
+				multiLineBuffer.Reset()
+				isInMultiLine = false
+			}
+			continue
+		}
+
+		if !strings.HasSuffix(line, ";") {
+			return &DMLError{
+				Type:    ErrorTypeSyntax,
+				Message: "Missing semicolon at the end of declaration",
+				Line:    lineNum + 1,
+				Column:  len(line),
+				Context: originalLine,
+			}
+		}
+
+		if err := c.parseLine(line, lineNum+1, originalLine); err != nil {
+			return err
+		}
+	}
+
+	if isInMultiLine {
+		return &DMLError{
+			Type:    ErrorTypeSyntax,
+			Message: "Unclosed declaration (missing ';')",
+			Line:    multiLineStart,
+			Column:  1,
+			Context: multiLineBuffer.String(),
+		}
+	}
+
+	return nil
+}
+
+func (c *Config) parseDirective(line string, lineNum int) error {
+	line = strings.TrimSpace(strings.TrimPrefix(line, "@"))
+	parts := strings.Fields(line)
+
+	if len(parts) < 2 {
+		return &DMLError{
+			Type:    ErrorTypeValidation,
+			Message: fmt.Sprintf("Invalid directive: @%s", line),
+			Line:    lineNum,
+			Column:  1,
+			Context: line,
+		}
+	}
+
+	directive := parts[0]
+	value := parts[1]
+
+	switch directive {
+	case "mapStyle":
+		return c.handleMapStyleDirective(value, lineNum)
+	default:
+		return &DMLError{
+			Type:    ErrorTypeValidation,
+			Message: fmt.Sprintf("Unknown directive: @%s", directive),
+			Line:    lineNum,
+			Column:  1,
+			Context: line,
+		}
+	}
+}
+
+func (c *Config) handleMapStyleDirective(value string, lineNum int) error {
+	switch strings.ToLower(value) {
+	case "json":
+		c.SetMapStyle(MapStyleJSON)
+	case "flat":
+		c.SetMapStyle(MapStyleFlat)
+	case "auto":
+		c.SetMapStyle(MapStyleAuto)
+	default:
+		return &DMLError{
+			Type:    ErrorTypeValidation,
+			Message: fmt.Sprintf("Invalid mapStyle value: %s (expected: json, flat, or auto)", value),
+			Line:    lineNum,
+			Column:  1,
+			Context: value,
+		}
+	}
+	return nil
 }
 
 func (c *Config) parseLine(line string, lineNum int, originalLine string) error {
-    parts := strings.SplitN(line, "=", 2)
-    if len(parts) != 2 {
-        return newSyntaxError(
-            lineNum,
-            1,
-            "Expected format: 'type name = value'",
-            originalLine,
-        )
-    }
+	line = strings.TrimSuffix(strings.TrimSpace(line), ";")
 
-    declaration := strings.TrimSpace(parts[0])
-    value := strings.TrimSpace(parts[1])
-    
-    declParts := strings.Fields(declaration)
-    if len(declParts) != 2 {
-        return newSyntaxError(
-            lineNum,
-            1,
-            "Declaration must have format: 'type name'",
-            originalLine,
-        )
-    }
-    
-    varType := declParts[0]
-    varName := declParts[1]
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return &DMLError{
+			Type:    ErrorTypeSyntax,
+			Message: "Missing '=' operator in variable declaration",
+			Line:    lineNum,
+			Column:  1,
+			Context: originalLine,
+		}
+	}
 
-    if !isValidIdentifier(varName) {
-        col := strings.Index(originalLine, varName) + 1
-        return newValidationError(
-            lineNum,
-            col,
-            fmt.Sprintf("Invalid identifier: '%s'. Must start with letter and contain only letters, numbers, and underscores", varName),
-            originalLine,
-        )
-    }
+	declaration := strings.TrimSpace(parts[0])
+	value := strings.TrimSpace(parts[1])
 
-    parsedValue, err := c.parseValue(varType, value, lineNum, originalLine)
-    if err != nil {
-        return err
-    }
-    
-    c.data[varName] = parsedValue
-    return nil
+	declParts := strings.Fields(declaration)
+	if len(declParts) != 2 {
+		return &DMLError{
+			Type:    ErrorTypeValidation,
+			Message: "Invalid variable declaration format. Expected: type name = value",
+			Line:    lineNum,
+			Column:  1,
+			Context: originalLine,
+		}
+	}
+
+	varType := declParts[0]
+	varName := declParts[1]
+
+	if !isValidIdentifier(varName) {
+		col := strings.Index(originalLine, varName) + 1
+		if col == 0 {
+			col = 1
+		}
+		return &DMLError{
+			Type:    ErrorTypeValidation,
+			Message: "Invalid identifier. Must start with letter or underscore, and contain only letters, digits, underscores, or dots",
+			Line:    lineNum,
+			Column:  col,
+			Context: originalLine,
+		}
+	}
+
+	parsedValue, err := c.parseValue(varType, value, lineNum, 1, originalLine)
+	if err != nil {
+		return err
+	}
+
+	c.Set(varName, parsedValue)
+	return nil
 }
 
-func (c *Config) parseValue(varType, value string, lineNum int, originalLine string) (interface{}, error) {
-    valueCol := strings.Index(originalLine, value) + 1
-    
-    switch varType {
-    case "string":
-        return c.parseString(value, lineNum, valueCol, originalLine)
-    case "int":
-        return c.parseInt(value, lineNum, valueCol, originalLine)
-    case "float":
-        return c.parseFloat(value, lineNum, valueCol, originalLine)
-    case "bool":
-        return c.parseBool(value, lineNum, valueCol, originalLine)
-    case "list":
-        return c.parseList(value, lineNum, valueCol, originalLine)
-    case "map":
-        return c.parseMap(value, lineNum, valueCol, originalLine)
-    default:
-        return nil, newValidationError(
-            lineNum,
-            1,
-            fmt.Sprintf("Unknown type: '%s'. Valid types: string, int, float, bool, list, map", varType),
-            originalLine,
-        )
-    }
+func (c *Config) parseValue(varType, value string, lineNum, col int, line string) (interface{}, error) {
+	switch varType {
+	case "string":
+		return c.parseString(value, lineNum, col, line)
+	case "int", "number":
+		return c.parseInt(value, lineNum, col, line)
+	case "float":
+		return c.parseFloat(value, lineNum, col, line)
+	case "bool", "boolean":
+		return c.parseBool(value, lineNum, col, line)
+	case "list":
+		return c.parseList(value, lineNum, col, line)
+	case "map":
+		return c.parseMap(value, lineNum, col, line)
+	default:
+		return nil, &DMLError{
+			Type:    ErrorTypeValidation,
+			Message: fmt.Sprintf("Unknown type: %s", varType),
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
 }
 
 func (c *Config) parseString(value string, lineNum, col int, line string) (string, error) {
-    if !strings.HasPrefix(value, `"`) || !strings.HasSuffix(value, `"`) {
-        return "", newTypeError(
-            lineNum,
-            col,
-            "String must be enclosed in double quotes",
-            line,
-        )
-    }
-    return strings.Trim(value, `"`), nil
+	if !strings.HasPrefix(value, `"`) || !strings.HasSuffix(value, `"`) {
+		return "", &DMLError{
+			Type:    ErrorTypeType,
+			Message: "String must be enclosed in double quotes",
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
+	return strings.Trim(value, `"`), nil
 }
 
 func (c *Config) parseInt(value string, lineNum, col int, line string) (int, error) {
-    num, err := strconv.Atoi(value)
-    if err != nil {
-        return 0, newTypeError(
-            lineNum,
-            col,
-            fmt.Sprintf("Invalid integer: '%s'", value),
-            line,
-        )
-    }
-    return num, nil
+	val, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, &DMLError{
+			Type:    ErrorTypeType,
+			Message: fmt.Sprintf("Invalid integer value: %s", value),
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
+	return val, nil
 }
 
 func (c *Config) parseFloat(value string, lineNum, col int, line string) (float64, error) {
-    num, err := strconv.ParseFloat(value, 64)
-    if err != nil {
-        return 0, newTypeError(
-            lineNum,
-            col,
-            fmt.Sprintf("Invalid float: '%s'", value),
-            line,
-        )
-    }
-    return num, nil
+	val, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, &DMLError{
+			Type:    ErrorTypeType,
+			Message: fmt.Sprintf("Invalid float value: %s", value),
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
+	return val, nil
 }
 
 func (c *Config) parseBool(value string, lineNum, col int, line string) (bool, error) {
-    switch value {
-    case "true":
-        return true, nil
-    case "false":
-        return false, nil
-    default:
-        return false, newTypeError(
-            lineNum,
-            col,
-            fmt.Sprintf("Invalid boolean: '%s'. Must be 'true' or 'false'", value),
-            line,
-        )
-    }
+	switch value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, &DMLError{
+			Type:    ErrorTypeType,
+			Message: "Boolean must be 'true' or 'false'",
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
 }
 
 func (c *Config) parseList(value string, lineNum, col int, line string) ([]interface{}, error) {
-    if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
-        return nil, newTypeError(
-            lineNum,
-            col,
-            "List must be enclosed in square brackets []",
-            line,
-        )
-    }
-    
-    value = strings.TrimPrefix(value, "[")
-    value = strings.TrimSuffix(value, "]")
-    value = strings.TrimSpace(value)
-    
-    if value == "" {
-        return []interface{}{}, nil
-    }
-    
-    items := strings.Split(value, ",")
-    result := make([]interface{}, len(items))
-    
-    for i, item := range items {
-        item = strings.TrimSpace(item)
-        result[i] = strings.Trim(item, `"`)
-    }
-    
-    return result, nil
+	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+		return nil, &DMLError{
+			Type:    ErrorTypeType,
+			Message: "List must be enclosed in square brackets []",
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
+
+	content := strings.Trim(value, "[]")
+	content = strings.TrimSpace(content)
+
+	if content == "" {
+		return []interface{}{}, nil
+	}
+
+	items := strings.Split(content, ",")
+	result := make([]interface{}, 0, len(items))
+
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+
+		if strings.HasPrefix(item, `"`) && strings.HasSuffix(item, `"`) {
+			result = append(result, strings.Trim(item, `"`))
+		} else if val, err := strconv.Atoi(item); err == nil {
+			result = append(result, val)
+		} else if val, err := strconv.ParseFloat(item, 64); err == nil {
+			result = append(result, val)
+		} else if item == "true" || item == "false" {
+			result = append(result, item == "true")
+		} else {
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
 }
 
 func (c *Config) parseMap(value string, lineNum, col int, line string) (map[string]interface{}, error) {
-    if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
-        return nil, newTypeError(
-            lineNum,
-            col,
-            "Map must be enclosed in curly braces {}",
-            line,
-        )
-    }
-    
-    value = strings.TrimPrefix(value, "{")
-    value = strings.TrimSuffix(value, "}")
-    value = strings.TrimSpace(value)
-    
-    if value == "" {
-        return map[string]interface{}{}, nil
-    }
-    
-    result := make(map[string]interface{})
-    pairs := strings.Split(value, ",")
-    
-    for _, pair := range pairs {
-        kv := strings.SplitN(pair, ":", 2)
-        if len(kv) != 2 {
-            return nil, newSyntaxError(
-                lineNum,
-                col,
-                "Map entries must have format: \"key\": \"value\"",
-                line,
-            )
-        }
-        
-        key := strings.TrimSpace(kv[0])
-        key = strings.Trim(key, `"'`)
-        
-        val := strings.TrimSpace(kv[1])
-        val = strings.Trim(val, `"'`)
-        
-        result[key] = val
-    }
-    
-    return result, nil
+	if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
+		return nil, &DMLError{
+			Type:    ErrorTypeType,
+			Message: "Map must be enclosed in curly braces {}",
+			Line:    lineNum,
+			Column:  col,
+			Context: line,
+		}
+	}
+
+	content := strings.Trim(value, "{}")
+	content = strings.TrimSpace(content)
+
+	if content == "" {
+		return map[string]interface{}{}, nil
+	}
+
+	result := make(map[string]interface{})
+	pairs := c.smartSplit(content, ',')
+
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			return nil, &DMLError{
+				Type:    ErrorTypeType,
+				Message: "Map entries must be in 'key: value' format",
+				Line:    lineNum,
+				Column:  col,
+				Context: line,
+			}
+		}
+
+		key := strings.Trim(strings.TrimSpace(parts[0]), `"`)
+		val := strings.TrimSpace(parts[1])
+
+		parsedVal := c.parseMapValue(val)
+		result[key] = parsedVal
+	}
+
+	return result, nil
+}
+
+func (c *Config) smartSplit(s string, delimiter rune) []string {
+	var result []string
+	var current strings.Builder
+	depth := 0
+	inQuotes := false
+
+	for _, ch := range s {
+		if ch == '"' {
+			inQuotes = !inQuotes
+			current.WriteRune(ch)
+			continue
+		}
+
+		if !inQuotes {
+			if ch == '{' || ch == '[' {
+				depth++
+			} else if ch == '}' || ch == ']' {
+				depth--
+			}
+		}
+
+		if ch == delimiter && depth == 0 && !inQuotes {
+			result = append(result, current.String())
+			current.Reset()
+		} else {
+			current.WriteRune(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+
+	return result
+}
+
+func (c *Config) parseMapValue(val string) interface{} {
+	val = strings.TrimSpace(val)
+
+	if strings.HasPrefix(val, `"`) && strings.HasSuffix(val, `"`) {
+		return strings.Trim(val, `"`)
+	}
+
+	if val == "true" {
+		return true
+	}
+	if val == "false" {
+		return false
+	}
+
+	if intVal, err := strconv.Atoi(val); err == nil {
+		return intVal
+	}
+
+	if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
+		return floatVal
+	}
+
+	if strings.HasPrefix(val, "{") && strings.HasSuffix(val, "}") {
+		if nested, err := c.parseMap(val, 0, 0, ""); err == nil {
+			return nested
+		}
+	}
+
+	if strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]") {
+		if nested, err := c.parseList(val, 0, 0, ""); err == nil {
+			return nested
+		}
+	}
+
+	return val
 }
 
 func isValidIdentifier(name string) bool {
-    if name == "" {
-        return false
-    }
+	if len(name) == 0 {
+		return false
+	}
 
-    first := rune(name[0])
-    if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
-        return false
-    }
+	for i, ch := range name {
+		if i == 0 {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+				return false
+			}
+		} else {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.') {
+				return false
+			}
+		}
+	}
 
-    for _, ch := range name[1:] {
-        if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
-            return false
-        }
-    }
-    
-    return true
+	return true
 }

@@ -10,6 +10,7 @@ It supports:
 - ✅ **Type validation and syntax checking**
 - ✅ **Environment variable interpolation and management**
 - ✅ **12-factor app support with .env files**
+- ✅ **Enforced map style (JSON/Flat/Auto) for consistent output**
 - ✅ Validation of required keys and types
 - ✅ In-memory caching for faster reads
 - ✅ Manual reload and clear cache functionality
@@ -99,6 +100,100 @@ Then open:
 `http://localhost:8080/api/hello`
 
 ✅ You will see: `"👋 Hello from DML-configured server!"`
+
+---
+
+## 🎨 Map Style Control
+
+DML-Go gives you full control over how configuration is dumped - no more surprises!
+
+### Global Map Style
+
+Set the style for all dumps:
+
+```go
+// Always use JSON-style maps
+dml.SetMapStyle(dml.MapStyleJSON)
+
+cfg := dml.New()
+cfg.Set("server.port", 8080)
+cfg.Set("server.host", "localhost")
+
+fmt.Println(cfg.Dump())
+```
+
+**Output:**
+```dml
+@mapStyle json
+
+map server = {
+  "host": "localhost",
+  "port": 8080
+};
+```
+
+### Available Styles
+
+| Style             | Behavior                               | Example                                    |
+| ----------------- | -------------------------------------- | ------------------------------------------ |
+| `MapStyleJSON`    | Always uses map syntax                 | `map server = { "port": 8080 };`           |
+| `MapStyleFlat`    | Always uses flat key-value syntax      | `number server.port = 8080;`               |
+| `MapStyleAuto`    | Automatically decides based on content | Smart decision based on complexity         |
+
+### Per-Config Override
+
+Override style for specific config instances:
+
+```go
+cfg := dml.New()
+cfg.SetMapStyle(dml.MapStyleFlat)
+cfg.Set("database.host", "localhost")
+cfg.Set("database.port", 5432)
+
+fmt.Println(cfg.Dump())
+```
+
+**Output:**
+```dml
+@mapStyle flat
+
+string database.host = "localhost";
+number database.port = 5432;
+```
+
+### DML File Directive
+
+Control style directly in `.dml` files:
+
+```dml
+@mapStyle json
+
+map server = {
+  "port": 8080,
+  "timeout": 30
+};
+```
+
+The parser respects the `@mapStyle` directive and maintains consistency.
+
+### Why Map Style Control?
+
+**Problem:** CLI tools might generate inconsistent output:
+```dml
+// Sometimes this:
+string server.port = "8080";
+
+// Sometimes this:
+map server = {
+  "port": 8080
+};
+```
+
+**Solution:** Enforce consistent style:
+```go
+dml.SetMapStyle(dml.MapStyleJSON)
+// Now ALWAYS generates map syntax - zero surprises! 🎯
+```
 
 ---
 
@@ -408,6 +503,8 @@ func main() {
 | `ClearCache()`                                      | Clears all cached parsed files from memory                         |
 | `Watch(file)`                                       | Live reload of dml file                                            |
 | `SetDefaultsToFile(file, variables, isOverwriting)` | Change variables from files to go                                  |
+| `SetMapStyle(style MapStyle)`                       | Sets global map dump style (JSON/Flat/Auto)                        |
+| `GetMapStyle()`                                     | Returns current global map style                                   |
 
 ### 🔹 `Config` methods
 
@@ -423,7 +520,8 @@ func main() {
 | `MustString(key string)`                         | Returns a string value or panics if missing                      |
 | `Has(key string)`                                | Checks if a key exists                                           |
 | `Keys()`                                         | Returns a sorted list of top-level keys                          |
-| `Dump()`                                         | Dumps the entire parsed data as formatted JSON                   |
+| `Dump()`                                         | Dumps the entire parsed data in DML format (respects map style)  |
+| `SetMapStyle(style MapStyle)`                    | Sets map style for this specific config                          |
 | `ValidateRequired(keys...)`                      | Validates that specific keys exist                               |
 | `ValidateRequiredTyped(rules map[string]string)` | Validates that keys exist and match expected types               |
 
@@ -474,6 +572,9 @@ map user = {"name": "Szymon", "email": "example@example.com"};
 
 // Comments are supported (use //)
 // This is a comment
+
+// Control dump style with directive
+@mapStyle json
 ```
 
 ### Supported Types
@@ -506,6 +607,9 @@ go tool cover -html=coverage.out
 
 # Run error handling demo
 go run test_errors.go
+
+# Test map style functionality
+go run test_mapstyle.go
 ```
 
 
@@ -570,6 +674,7 @@ The library includes comprehensive tests for:
 - ✅ Multi-line configurations
 - ✅ Comment handling
 - ✅ Error message formatting
+- ✅ Map style enforcement (JSON/Flat/Auto)
 
 ---
 

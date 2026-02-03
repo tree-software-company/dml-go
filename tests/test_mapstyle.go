@@ -8,7 +8,6 @@ import (
 )
 
 func main() {
-	// Test 1: Global JSON style
 	fmt.Println("=== Test 1: Global JSON Style ===")
 	dml.SetMapStyle(dml.MapStyleJSON)
 
@@ -21,7 +20,6 @@ func main() {
 	fmt.Println(output1)
 	os.WriteFile("output_json.dml", []byte(output1), 0644)
 
-	// Test 2: Flat style
 	fmt.Println("=== Test 2: Flat Style ===")
 	dml.SetMapStyle(dml.MapStyleFlat)
 
@@ -34,7 +32,6 @@ func main() {
 	fmt.Println(output2)
 	os.WriteFile("output_flat.dml", []byte(output2), 0644)
 
-	// Test 3: Auto style (default behavior)
 	fmt.Println("=== Test 3: Auto Style ===")
 	dml.SetMapStyle(dml.MapStyleAuto)
 
@@ -46,7 +43,6 @@ func main() {
 	fmt.Println(output3)
 	os.WriteFile("output_auto.dml", []byte(output3), 0644)
 
-	// Test 4: Per-config style override
 	fmt.Println("=== Test 4: Per-Config Override ===")
 	cfg4 := dml.New()
 	cfg4.SetMapStyle(dml.MapStyleJSON)

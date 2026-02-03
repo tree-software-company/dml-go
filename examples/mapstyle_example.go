@@ -10,7 +10,6 @@ import (
 func main() {
 	fmt.Println("=== DML Map Style Examples ===\n")
 
-	// Example 1: Global JSON style
 	fmt.Println("1. Global JSON Style:")
 	dml.SetMapStyle(dml.MapStyleJSON)
 
@@ -21,7 +20,6 @@ func main() {
 
 	fmt.Println(cfg1.Dump())
 
-	// Example 2: Per-config flat style
 	fmt.Println("2. Per-Config Flat Style:")
 	cfg2 := dml.New()
 	cfg2.SetMapStyle(dml.MapStyleFlat)
@@ -30,7 +28,6 @@ func main() {
 
 	fmt.Println(cfg2.Dump())
 
-	// Example 3: Auto style (default)
 	fmt.Println("3. Auto Style (Smart Decision):")
 	dml.SetMapStyle(dml.MapStyleAuto)
 
@@ -40,7 +37,6 @@ func main() {
 
 	fmt.Println(cfg3.Dump())
 
-	// Example 4: Parse file with @mapStyle directive
 	fmt.Println("4. Parse File with @mapStyle Directive:")
 	cfg4 := dml.New()
 	err := cfg4.Parse(`@mapStyle json

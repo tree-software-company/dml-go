@@ -18,6 +18,13 @@ const (
 	MapStyleFlat
 )
 
+type DefaultPolicy struct {
+	Override      bool
+	StrictTypes   bool
+	OnlyMissing   bool
+	SkipIfPresent bool
+}
+
 var (
 	globalMapStyle = MapStyleAuto
 	configCache    = make(map[string]map[string]any)
@@ -32,69 +39,53 @@ func GetMapStyle() MapStyle {
 	return globalMapStyle
 }
 
-func Cache(filepath string) (map[string]any, error) {
-	cacheMutex.RLock()
-	if cached, exists := configCache[filepath]; exists {
-		cacheMutex.RUnlock()
-		return cached, nil
-	}
-	cacheMutex.RUnlock()
-
-	content, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	cfg := New()
-	if err := cfg.Parse(string(content)); err != nil {
-		return nil, err
-	}
-
-	cacheMutex.Lock()
-	configCache[filepath] = cfg.data
-	cacheMutex.Unlock()
-
-	return cfg.data, nil
+var DefaultPolicyPermissive = DefaultPolicy{
+	Override:      true,
+	StrictTypes:   false,
+	OnlyMissing:   false,
+	SkipIfPresent: false,
 }
 
-func Reload(filepath string) (map[string]any, error) {
-	cacheMutex.Lock()
-	delete(configCache, filepath)
-	cacheMutex.Unlock()
-
-	return Cache(filepath)
+var DefaultPolicyStrict = DefaultPolicy{
+	Override:      false,
+	StrictTypes:   true,
+	OnlyMissing:   true,
+	SkipIfPresent: false,
 }
 
-func ClearCache() {
-	cacheMutex.Lock()
-	configCache = make(map[string]map[string]any)
-	cacheMutex.Unlock()
-}
-
-func Load(filepath string) (map[string]any, error) {
-	content, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	cfg := New()
-	if err := cfg.Parse(string(content)); err != nil {
-		return nil, err
-	}
-
-	return cfg.data, nil
-}
-
-type ValidationResult struct {
-	MissingKeys []string
-	WrongTypes  []string
-	IsValid     bool
+var DefaultPolicyConservative = DefaultPolicy{
+	Override:      false,
+	StrictTypes:   true,
+	OnlyMissing:   false,
+	SkipIfPresent: true,
 }
 
 type Config struct {
 	data        map[string]any
 	defaultKeys map[string]bool
 	mapStyle    MapStyle
+}
+
+func New() *Config {
+	return &Config{
+		data:        make(map[string]any),
+		defaultKeys: make(map[string]bool),
+		mapStyle:    MapStyleAuto,
+	}
+}
+
+func NewConfig(filepath string) (*Config, error) {
+	content, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := New()
+	if err := cfg.Parse(string(content)); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
 }
 
 func (c *Config) SetMapStyle(style MapStyle) {
@@ -108,59 +99,82 @@ func (c *Config) getEffectiveMapStyle() MapStyle {
 	return globalMapStyle
 }
 
-func New() *Config {
-	return &Config{
-		data:        make(map[string]any),
-		defaultKeys: make(map[string]bool),
-		mapStyle:    MapStyleAuto,
+func (c *Config) Set(key string, value any) {
+	keys := strings.Split(key, ".")
+	current := c.data
+
+	for i := 0; i < len(keys)-1; i++ {
+		if _, exists := current[keys[i]]; !exists {
+			current[keys[i]] = make(map[string]any)
+		}
+		if nested, ok := current[keys[i]].(map[string]any); ok {
+			current = nested
+		} else {
+			current[keys[i]] = make(map[string]any)
+			current = current[keys[i]].(map[string]any)
+		}
 	}
+
+	current[keys[len(keys)-1]] = value
 }
 
-func NewConfig(filename string) (*Config, error) {
-	parsed, err := Cache(filename)
-	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to parse DML file '%s': %w", filename, err)
+func (c *Config) Get(key string) (any, bool) {
+	keys := strings.Split(key, ".")
+	current := c.data
+
+	for i := 0; i < len(keys)-1; i++ {
+		if val, exists := current[keys[i]]; exists {
+			if nested, ok := val.(map[string]any); ok {
+				current = nested
+			} else {
+				return nil, false
+			}
+		} else {
+			return nil, false
+		}
 	}
 
-	if parsed == nil {
-		parsed = make(map[string]any)
-	}
-
-	return &Config{
-		data:        parsed,
-		defaultKeys: make(map[string]bool),
-		mapStyle:    MapStyleAuto,
-	}, nil
+	val, exists := current[keys[len(keys)-1]]
+	return val, exists
 }
 
 func (c *Config) GetString(key string) string {
-	if val, ok := c.resolveNestedKey(key); ok {
+	if val, exists := c.Get(key); exists {
 		if str, ok := val.(string); ok {
 			return str
 		}
+		return fmt.Sprintf("%v", val)
 	}
 	return ""
 }
 
 func (c *Config) GetInt(key string) int {
-	if val, ok := c.resolveNestedKey(key); ok {
+	if val, exists := c.Get(key); exists {
 		switch v := val.(type) {
 		case int:
 			return v
 		case float64:
 			return int(v)
+		case string:
+			var i int
+			fmt.Sscanf(v, "%d", &i)
+			return i
 		}
 	}
 	return 0
 }
 
 func (c *Config) GetFloat(key string) float64 {
-	if val, ok := c.resolveNestedKey(key); ok {
+	if val, exists := c.Get(key); exists {
 		switch v := val.(type) {
 		case float64:
 			return v
 		case int:
 			return float64(v)
+		case string:
+			var f float64
+			fmt.Sscanf(v, "%f", &f)
+			return f
 		}
 	}
 	return 0.0
@@ -171,16 +185,19 @@ func (c *Config) GetNumber(key string) float64 {
 }
 
 func (c *Config) GetBool(key string) bool {
-	if val, ok := c.resolveNestedKey(key); ok {
+	if val, exists := c.Get(key); exists {
 		if b, ok := val.(bool); ok {
 			return b
+		}
+		if str, ok := val.(string); ok {
+			return str == "true"
 		}
 	}
 	return false
 }
 
 func (c *Config) GetList(key string) []any {
-	if val, ok := c.resolveNestedKey(key); ok {
+	if val, exists := c.Get(key); exists {
 		if list, ok := val.([]any); ok {
 			return list
 		}
@@ -189,59 +206,17 @@ func (c *Config) GetList(key string) []any {
 }
 
 func (c *Config) GetMap(key string) map[string]any {
-	if val, ok := c.resolveNestedKey(key); ok {
+	if val, exists := c.Get(key); exists {
 		if m, ok := val.(map[string]any); ok {
 			return m
 		}
 	}
-	return map[string]any{}
-}
-
-func (c *Config) MustString(key string) string {
-	if val, ok := c.resolveNestedKey(key); ok {
-		if str, ok := val.(string); ok {
-			return str
-		}
-	}
-	panic(fmt.Sprintf("❌ Missing required string key: '%s'", key))
-}
-
-func (c *Config) MustInt(key string) int {
-	if val, ok := c.resolveNestedKey(key); ok {
-		switch v := val.(type) {
-		case int:
-			return v
-		case float64:
-			return int(v)
-		}
-	}
-	panic(fmt.Sprintf("❌ Missing required int key: '%s'", key))
-}
-
-func (c *Config) MustFloat(key string) float64 {
-	if val, ok := c.resolveNestedKey(key); ok {
-		switch v := val.(type) {
-		case float64:
-			return v
-		case int:
-			return float64(v)
-		}
-	}
-	panic(fmt.Sprintf("❌ Missing required float key: '%s'", key))
-}
-
-func (c *Config) MustBool(key string) bool {
-	if val, ok := c.resolveNestedKey(key); ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	panic(fmt.Sprintf("❌ Missing required bool key: '%s'", key))
+	return make(map[string]any)
 }
 
 func (c *Config) Has(key string) bool {
-	_, ok := c.resolveNestedKey(key)
-	return ok
+	_, exists := c.Get(key)
+	return exists
 }
 
 func (c *Config) Keys() []string {
@@ -251,6 +226,116 @@ func (c *Config) Keys() []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func (c *Config) MustString(key string) string {
+	val := c.GetString(key)
+	if val == "" && !c.Has(key) {
+		panic(fmt.Sprintf("required key '%s' not found", key))
+	}
+	return val
+}
+
+func (c *Config) ValidateRequired(keys ...string) error {
+	for _, key := range keys {
+		if !c.Has(key) {
+			return fmt.Errorf("required key '%s' not found", key)
+		}
+	}
+	return nil
+}
+
+func (c *Config) ValidateRequiredTyped(rules map[string]string) error {
+	for key, expectedType := range rules {
+		if !c.Has(key) {
+			return fmt.Errorf("required key '%s' not found", key)
+		}
+
+		val, _ := c.Get(key)
+		actualType := fmt.Sprintf("%T", val)
+
+		typeMatches := false
+		switch expectedType {
+		case "string":
+			_, typeMatches = val.(string)
+		case "int":
+			_, ok1 := val.(int)
+			_, ok2 := val.(float64)
+			typeMatches = ok1 || ok2
+		case "float":
+			_, ok1 := val.(float64)
+			_, ok2 := val.(int)
+			typeMatches = ok1 || ok2
+		case "bool":
+			_, typeMatches = val.(bool)
+		case "list":
+			_, typeMatches = val.([]any)
+		case "map":
+			_, typeMatches = val.(map[string]any)
+		}
+
+		if !typeMatches {
+			return fmt.Errorf("key '%s' has wrong type: expected %s, got %s", key, expectedType, actualType)
+		}
+	}
+	return nil
+}
+
+func ApplyDefaults(filepath string, defaults map[string]any, policy DefaultPolicy) error {
+	cfg, err := Load(filepath)
+	if err != nil {
+		return err
+	}
+
+	config := &Config{
+		data:        cfg,
+		defaultKeys: make(map[string]bool),
+		mapStyle:    MapStyleAuto,
+	}
+
+	if policy.SkipIfPresent && len(config.data) > 0 {
+		return nil
+	}
+
+	for key, value := range defaults {
+		if err := config.applyDefault(key, value, policy); err != nil {
+			return err
+		}
+	}
+
+	return config.SaveToFile(filepath)
+}
+
+func (c *Config) applyDefault(key string, value any, policy DefaultPolicy) error {
+	exists := c.Has(key)
+
+	if policy.OnlyMissing && exists {
+		return nil
+	}
+
+	if !policy.Override && exists {
+		return nil
+	}
+
+	if policy.StrictTypes && exists {
+		currentVal, _ := c.Get(key)
+		if !typesMatch(currentVal, value) {
+			return fmt.Errorf("type mismatch for key '%s': expected %T, got %T", key, currentVal, value)
+		}
+	}
+
+	c.Set(key, value)
+	c.defaultKeys[key] = true
+	return nil
+}
+
+func typesMatch(a, b any) bool {
+	return reflect.TypeOf(a) == reflect.TypeOf(b)
+}
+
+func (c *Config) SaveToFile(filepath string) error {
+	content := c.Dump()
+	return os.WriteFile(filepath, []byte(content), 0644)
 }
 
 func (c *Config) Dump() string {
@@ -415,244 +500,67 @@ func (c *Config) hasNestedStructures(m map[string]any) bool {
 	return false
 }
 
-func (c *Config) ValidateRequired(keys ...string) error {
-	missing := []string{}
-
-	for _, key := range keys {
-		if _, ok := c.resolveNestedKey(key); !ok {
-			missing = append(missing, key)
-		}
+func Cache(filepath string) (map[string]any, error) {
+	cacheMutex.RLock()
+	if cached, exists := configCache[filepath]; exists {
+		cacheMutex.RUnlock()
+		return cached, nil
 	}
+	cacheMutex.RUnlock()
 
-	if len(missing) > 0 {
-		return fmt.Errorf("❌ Missing required keys: %v", missing)
-	}
-	return nil
-}
-
-func (c *Config) ValidateRequiredTyped(rules map[string]string) error {
-	missing := []string{}
-	wrongType := []string{}
-
-	for key, expectedType := range rules {
-		val, ok := c.resolveNestedKey(key)
-		if !ok {
-			missing = append(missing, key)
-			continue
-		}
-
-		actualType := reflect.TypeOf(val).String()
-		if actualType != expectedType {
-			wrongType = append(wrongType, fmt.Sprintf("%s (expected %s, got %s)", key, expectedType, actualType))
-		}
-	}
-
-	if len(missing) > 0 || len(wrongType) > 0 {
-		msg := "❌ Validation failed:\n"
-		if len(missing) > 0 {
-			msg += fmt.Sprintf("  - Missing keys: %v\n", missing)
-		}
-		if len(wrongType) > 0 {
-			msg += fmt.Sprintf("  - Wrong types:\n    %s\n", formatList(wrongType))
-		}
-		return fmt.Errorf(msg)
-	}
-
-	return nil
-}
-
-func formatList(list []string) string {
-	return "    " + fmt.Sprintf("%s", joinWithNewlines(list))
-}
-
-func joinWithNewlines(list []string) string {
-	result := ""
-	for i, v := range list {
-		if i > 0 {
-			result += "\n    "
-		}
-		result += v
-	}
-	return result
-}
-
-func (c *Config) resolveNestedKey(key string) (any, bool) {
-	parts := strings.Split(key, ".")
-	var current any = c.data
-
-	for _, part := range parts {
-		if m, ok := current.(map[string]any); ok {
-			current, ok = m[part]
-			if !ok {
-				return nil, false
-			}
-		} else {
-			return nil, false
-		}
-	}
-	return current, true
-}
-
-func (c *Config) MissedKeys(required []string) []string {
-	var missing []string
-	for _, key := range required {
-		if _, ok := c.resolveNestedKey(key); !ok {
-			missing = append(missing, key)
-		}
-	}
-	return missing
-}
-
-func (c *Config) MissedTypedKeys(expected map[string]string) []string {
-	var wrong []string
-
-	for key, wantType := range expected {
-		val, ok := c.resolveNestedKey(key)
-		if !ok {
-			continue
-		}
-
-		actualType := fmt.Sprintf("%T", val)
-		if actualType != wantType {
-			wrong = append(wrong, key)
-		}
-	}
-
-	return wrong
-}
-
-func (c *Config) ValidateState(requiredKeys []string, expectedTypes map[string]string) ValidationResult {
-	missing := c.MissedKeys(requiredKeys)
-	wrongTypes := c.MissedTypedKeys(expectedTypes)
-
-	return ValidationResult{
-		MissingKeys: missing,
-		WrongTypes:  wrongTypes,
-		IsValid:     len(missing) == 0 && len(wrongTypes) == 0,
-	}
-}
-
-func SetDefaultsToFile(file string, defaults map[string]any, forceOverride bool) error {
-	cfg, err := NewConfig(file)
-
+	data, err := Load(filepath)
 	if err != nil {
-		fmt.Printf("⚠️ Creating new config (could not read '%s'): %v\n", file, err)
-		cfg = &Config{data: make(map[string]any)}
-	} else if cfg.data == nil {
-		cfg.data = make(map[string]any)
+		return nil, err
 	}
 
-	var defaultKeys []string
-	for key, defValue := range defaults {
-		if forceOverride {
-			setNestedKey(cfg.data, key, defValue)
-			defaultKeys = append(defaultKeys, key)
-		} else {
-			val, exists := cfg.resolveNestedKey(key)
-			if !exists || isZero(val) {
-				setNestedKey(cfg.data, key, defValue)
-				defaultKeys = append(defaultKeys, key)
-			}
-		}
-	}
+	cacheMutex.Lock()
+	configCache[filepath] = data
+	cacheMutex.Unlock()
 
-	cfg.SetMetaDefaults(defaultKeys)
+	return data, nil
+}
 
-	output := cfg.Dump()
-	err = os.WriteFile(file, []byte(output), 0644)
+func Reload(filepath string) (map[string]any, error) {
+	data, err := Load(filepath)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to write file: %w", err)
+		return nil, err
 	}
 
-	fmt.Println("✅ Defaults applied and saved to", file)
-	return nil
+	cacheMutex.Lock()
+	configCache[filepath] = data
+	cacheMutex.Unlock()
+
+	return data, nil
 }
 
-func (c *Config) SetMetaDefaults(keys []string) {
-	c.defaultKeys = make(map[string]bool)
-	for _, k := range keys {
-		c.defaultKeys[k] = true
-	}
+func ClearCache() {
+	cacheMutex.Lock()
+	configCache = make(map[string]map[string]any)
+	cacheMutex.Unlock()
 }
 
-func setNestedKey(data map[string]any, key string, value any) {
-	parts := strings.Split(key, ".")
-	last := parts[len(parts)-1]
-
-	for i := 0; i < len(parts)-1; i++ {
-		part := parts[i]
-
-		if _, ok := data[part]; !ok {
-			data[part] = map[string]any{}
-		}
-
-		next, ok := data[part].(map[string]any)
-		if !ok {
-			return
-		}
-		data = next
+func Load(filepath string) (map[string]any, error) {
+	content, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, err
 	}
 
-	data[last] = value
-}
-
-func isZero(val any) bool {
-	switch v := val.(type) {
-	case string:
-		return v == ""
-	case float64:
-		return v == 0
-	case bool:
-		return !v
-	case []any:
-		return len(v) == 0
-	case map[string]any:
-		return len(v) == 0
-	default:
-		return val == nil
-	}
-}
-
-func (c *Config) Set(key string, value any) {
-	setNestedKey(c.data, key, value)
-}
-
-func (c *Config) Delete(key string) {
-	if !strings.Contains(key, ".") {
-		delete(c.data, key)
-		return
+	cfg := New()
+	if err := cfg.Parse(string(content)); err != nil {
+		return nil, err
 	}
 
-	parts := strings.Split(key, ".")
-	var current any = c.data
-
-	for i := 0; i < len(parts)-1; i++ {
-		if m, ok := current.(map[string]any); ok {
-			current = m[parts[i]]
-		} else {
-			return
-		}
-	}
-
-	if m, ok := current.(map[string]any); ok {
-		delete(m, parts[len(parts)-1])
-	}
+	return cfg.data, nil
 }
 
-func (c *Config) Merge(other *Config) {
-	for k, v := range other.data {
-		c.data[k] = v
+func (c *Config) ToJSON() (string, error) {
+	jsonBytes, err := json.MarshalIndent(c.data, "", "  ")
+	if err != nil {
+		return "", err
 	}
+	return string(jsonBytes), nil
 }
 
-func (c *Config) Clone() *Config {
-	newCfg := New()
-	data, _ := json.Marshal(c.data)
-	json.Unmarshal(data, &newCfg.data)
-	return newCfg
-}
-
-func (c *Config) get(key string) any {
-	val, _ := c.resolveNestedKey(key)
-	return val
+func (c *Config) FromJSON(jsonStr string) error {
+	return json.Unmarshal([]byte(jsonStr), &c.data)
 }

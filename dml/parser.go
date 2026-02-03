@@ -16,12 +16,10 @@ func (c *Config) Parse(content string) error {
 		originalLine := line
 		line = strings.TrimSpace(line)
 
-		// Skip empty lines and comments when not in multi-line
 		if !isInMultiLine && (line == "" || strings.HasPrefix(line, "//")) {
 			continue
 		}
 
-		// Handle directives (only at top level)
 		if !isInMultiLine && strings.HasPrefix(line, "@") {
 			if err := c.parseDirective(line, lineNum+1); err != nil {
 				return err
@@ -29,7 +27,6 @@ func (c *Config) Parse(content string) error {
 			continue
 		}
 
-		// Check if we're starting a multi-line declaration
 		if !isInMultiLine && (strings.Contains(line, "{") || strings.Contains(line, "[")) {
 			if !strings.HasSuffix(line, ";") {
 				isInMultiLine = true
@@ -40,12 +37,10 @@ func (c *Config) Parse(content string) error {
 			}
 		}
 
-		// Continue collecting multi-line content
 		if isInMultiLine {
 			multiLineBuffer.WriteString(line)
 			multiLineBuffer.WriteString(" ")
 
-			// Check if multi-line ends
 			if strings.HasSuffix(line, ";") {
 				fullLine := multiLineBuffer.String()
 				if err := c.parseLine(fullLine, multiLineStart, fullLine); err != nil {
@@ -57,7 +52,6 @@ func (c *Config) Parse(content string) error {
 			continue
 		}
 
-		// Single-line declaration
 		if !strings.HasSuffix(line, ";") {
 			return &DMLError{
 				Type:    ErrorTypeSyntax,
@@ -73,7 +67,6 @@ func (c *Config) Parse(content string) error {
 		}
 	}
 
-	// Check for unclosed multi-line
 	if isInMultiLine {
 		return &DMLError{
 			Type:    ErrorTypeSyntax,

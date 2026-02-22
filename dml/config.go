@@ -88,6 +88,26 @@ func NewConfig(filepath string) (*Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) ReloadKeys(filepath string, keys ...string) error {
+	content, err := os.ReadFile(filepath)
+	if err != nil {
+		return err
+	}
+
+	fresh := New()
+	if err := fresh.Parse(string(content)); err != nil {
+		return err
+	}
+
+	for _, key := range keys {
+		if val, exists := fresh.data[key]; exists {
+			c.data[key] = val
+		}
+	}
+
+	return nil
+}
+
 func (c *Config) SetMapStyle(style MapStyle) {
 	c.mapStyle = style
 }
@@ -531,6 +551,28 @@ func Reload(filepath string) (map[string]any, error) {
 	cacheMutex.Unlock()
 
 	return data, nil
+}
+
+func ReloadKeys(filepath string, keys ...string) (map[string]any, error) {
+	fresh, err := Load(filepath)
+	if err != nil {
+		return nil, err
+	}
+
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	if configCache[filepath] == nil {
+		configCache[filepath] = make(map[string]any)
+	}
+
+	for _, key := range keys {
+		if val, exists := fresh[key]; exists {
+			configCache[filepath][key] = val
+		}
+	}
+
+	return configCache[filepath], nil
 }
 
 func ClearCache() {

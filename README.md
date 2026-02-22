@@ -15,6 +15,7 @@ It supports:
 - ✅ Validation of required keys and types
 - ✅ In-memory caching for faster reads
 - ✅ Manual reload and clear cache functionality
+- ✅ **Partial reload with `ReloadKeys` — hot-reload only selected keys (perfect for long-running services)**
 - ✅ Full nested key support (e.g., `server.port`)
 
 Built for configuration-driven applications and servers.
@@ -111,6 +112,7 @@ DML-Go provides a powerful and flexible system for applying default values to co
 ### The Problem
 
 Before:
+
 ```go
 // ❌ Hard to understand, easy to make mistakes
 ApplyDefaults(file, defaults, true, false, true, false)
@@ -118,6 +120,7 @@ ApplyDefaults(file, defaults, true, false, true, false)
 ```
 
 After:
+
 ```go
 // ✅ Crystal clear intentions
 dml.ApplyDefaults(file, defaults, dml.DefaultPolicy{
@@ -148,6 +151,7 @@ dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyPermissive)
 ```
 
 **Behavior:**
+
 - ✅ Overrides all existing values
 - ✅ No type checking
 - ✅ Always applies defaults
@@ -162,6 +166,7 @@ dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyStrict)
 ```
 
 **Behavior:**
+
 - ✅ Only adds missing values
 - ✅ Enforces type matching
 - ✅ Never overrides existing values
@@ -176,6 +181,7 @@ dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicyConservative)
 ```
 
 **Behavior:**
+
 - ✅ Skips if ANY value exists
 - ✅ Type checking enabled
 - ✅ Preserves existing configurations
@@ -257,12 +263,12 @@ err := dml.ApplyDefaults("config.dml", defaults, dml.DefaultPolicy{
 
 ### Policy Comparison Table
 
-| Policy          | Override | StrictTypes | OnlyMissing | SkipIfPresent | Best For                    |
-| --------------- | -------- | ----------- | ----------- | ------------- | --------------------------- |
-| **Permissive**  | ✅       | ❌          | ❌          | ❌            | Development, testing        |
-| **Strict**      | ❌       | ✅          | ✅          | ❌            | Production, safe updates    |
-| **Conservative**| ❌       | ✅          | ❌          | ✅            | First-time initialization   |
-| **Custom**      | 🎛️       | 🎛️          | 🎛️          | 🎛️            | Specific requirements       |
+| Policy           | Override | StrictTypes | OnlyMissing | SkipIfPresent | Best For                  |
+| ---------------- | -------- | ----------- | ----------- | ------------- | ------------------------- |
+| **Permissive**   | ✅       | ❌          | ❌          | ❌            | Development, testing      |
+| **Strict**       | ❌       | ✅          | ✅          | ❌            | Production, safe updates  |
+| **Conservative** | ❌       | ✅          | ❌          | ✅            | First-time initialization |
+| **Custom**       | 🎛️       | 🎛️          | 🎛️          | 🎛️            | Specific requirements     |
 
 ### Testing Policies
 
@@ -326,6 +332,7 @@ fmt.Println(cfg.Dump())
 ```
 
 **Output:**
+
 ```dml
 @mapStyle json
 
@@ -337,11 +344,11 @@ map server = {
 
 ### Available Styles
 
-| Style             | Behavior                               | Example                                    |
-| ----------------- | -------------------------------------- | ------------------------------------------ |
-| `MapStyleJSON`    | Always uses map syntax                 | `map server = { "port": 8080 };`           |
-| `MapStyleFlat`    | Always uses flat key-value syntax      | `number server.port = 8080;`               |
-| `MapStyleAuto`    | Automatically decides based on content | Smart decision based on complexity         |
+| Style          | Behavior                               | Example                            |
+| -------------- | -------------------------------------- | ---------------------------------- |
+| `MapStyleJSON` | Always uses map syntax                 | `map server = { "port": 8080 };`   |
+| `MapStyleFlat` | Always uses flat key-value syntax      | `number server.port = 8080;`       |
+| `MapStyleAuto` | Automatically decides based on content | Smart decision based on complexity |
 
 ### Per-Config Override
 
@@ -357,6 +364,7 @@ fmt.Println(cfg.Dump())
 ```
 
 **Output:**
+
 ```dml
 @mapStyle flat
 
@@ -382,6 +390,7 @@ The parser respects the `@mapStyle` directive and maintains consistency.
 ### Why Map Style Control?
 
 **Problem:** CLI tools might generate inconsistent output:
+
 ```dml
 // Sometimes this:
 string server.port = "8080";
@@ -393,6 +402,7 @@ map server = {
 ```
 
 **Solution:** Enforce consistent style:
+
 ```go
 dml.SetMapStyle(dml.MapStyleJSON)
 // Now ALWAYS generates map syntax - zero surprises! 🎯
@@ -591,6 +601,90 @@ func main() {
 
 ---
 
+## ♻️ Partial Reload — `ReloadKeys`
+
+For **long-running Go services** you often want to hot-reload a small subset of
+configuration (e.g. rate limits, feature flags) without touching the rest.
+`ReloadKeys` re-parses the file but updates **only the keys you list**.
+
+### Signatures
+
+```go
+// Package-level — updates the global in-memory cache.
+func ReloadKeys(filepath string, keys ...string) (map[string]any, error)
+
+// Method — updates a *Config instance directly.
+func (c *Config) ReloadKeys(filepath string, keys ...string) error
+```
+
+### Behaviour
+
+| Scenario                                   | Result                                        |
+| ------------------------------------------ | --------------------------------------------- |
+| Key exists in file and is listed           | Value updated in cache / `*Config`            |
+| Key exists in file but **not** listed      | Untouched — existing value preserved          |
+| Key listed but **absent** from file        | Silently skipped — existing value preserved   |
+| No cache entry yet (package-level variant) | New entry created containing only listed keys |
+
+Thread-safe: both variants use `cacheMutex` for the cache write.
+
+### Example — `*Config` method (recommended for services)
+
+```go
+package main
+
+import (
+    "log"
+    "time"
+
+    "github.com/tree-software-company/dml-go/dml"
+)
+
+func main() {
+    cfg, err := dml.NewConfig("config.dml")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Poll every 30 s and hot-reload only server + database.
+    // app_version (and any other key) is never touched.
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
+
+    for range ticker.C {
+        if err := cfg.ReloadKeys("config.dml", "server", "database"); err != nil {
+            log.Printf("reload error: %v", err)
+        }
+    }
+}
+```
+
+### Example — package-level (cache-based)
+
+```go
+// Somewhere at startup:
+dml.Cache("config.dml")
+
+// Later, on a timer or signal:
+data, err := dml.ReloadKeys("config.dml", "server", "database")
+if err != nil {
+    log.Printf("reload error: %v", err)
+}
+srv := data["server"].(map[string]any)
+log.Printf("server.host = %v", srv["host"])
+```
+
+### When to use `Reload` vs `ReloadKeys`
+
+| Situation                                            | Use                   |
+| ---------------------------------------------------- | --------------------- |
+| Small config, full refresh is fine                   | `Reload`              |
+| Large config, only a few keys change at runtime      | `ReloadKeys`          |
+| Config has computed/enriched keys you do not persist | `ReloadKeys`          |
+| First load at startup                                | `NewConfig` / `Cache` |
+
+---
+
 ## 🔍 Error Handling & Validation
 
 DML-Go provides comprehensive error handling with detailed context about syntax and validation errors.
@@ -697,17 +791,18 @@ func main() {
 
 ### 🔹 Core functions
 
-| Function                                            | Description                                                        |
-| --------------------------------------------------- | ------------------------------------------------------------------ |
-| `Load(file string)`                                 | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
-| `NewConfig(file string)`                            | Loads and parses a `.dml` file into a `Config` structure           |
-| `Cache(file string)`                                | Loads and caches parsed data in memory                             |
-| `Reload(file string)`                               | Forces re-parsing and updates the cache for a file                 |
-| `ClearCache()`                                      | Clears all cached parsed files from memory                         |
-| `Watch(file)`                                       | Live reload of dml file                                            |
-| `ApplyDefaults(file, defaults, policy)`             | Apply default values with policy control                           |
-| `SetMapStyle(style MapStyle)`                       | Sets global map dump style (JSON/Flat/Auto)                        |
-| `GetMapStyle()`                                     | Returns current global map style                                   |
+| Function                                  | Description                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `Load(file string)`                       | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
+| `NewConfig(file string)`                  | Loads and parses a `.dml` file into a `Config` structure           |
+| `Cache(file string)`                      | Loads and caches parsed data in memory                             |
+| `Reload(file string)`                     | Forces re-parsing and updates the cache for a file                 |
+| `ReloadKeys(file string, keys ...string)` | Partially reloads only the given top-level keys in the cache       |
+| `ClearCache()`                            | Clears all cached parsed files from memory                         |
+| `Watch(file)`                             | Live reload of dml file                                            |
+| `ApplyDefaults(file, defaults, policy)`   | Apply default values with policy control                           |
+| `SetMapStyle(style MapStyle)`             | Sets global map dump style (JSON/Flat/Auto)                        |
+| `GetMapStyle()`                           | Returns current global map style                                   |
 
 ### 🔹 `Config` methods
 
@@ -725,15 +820,16 @@ func main() {
 | `Keys()`                                         | Returns a sorted list of top-level keys                          |
 | `Dump()`                                         | Dumps the entire parsed data in DML format (respects map style)  |
 | `SetMapStyle(style MapStyle)`                    | Sets map style for this specific config                          |
+| `ReloadKeys(file string, keys ...string)`        | Hot-reloads only the specified top-level keys from a file        |
 | `ValidateRequired(keys...)`                      | Validates that specific keys exist                               |
 | `ValidateRequiredTyped(rules map[string]string)` | Validates that keys exist and match expected types               |
 
 ### 🔹 Default Policy Presets
 
-| Policy                    | Description                                      |
-| ------------------------- | ------------------------------------------------ |
-| `DefaultPolicyPermissive` | Override all, no type checking (dev/testing)     |
-| `DefaultPolicyStrict`     | Only missing, strict types (production-safe)     |
+| Policy                      | Description                                    |
+| --------------------------- | ---------------------------------------------- |
+| `DefaultPolicyPermissive`   | Override all, no type checking (dev/testing)   |
+| `DefaultPolicyStrict`       | Only missing, strict types (production-safe)   |
 | `DefaultPolicyConservative` | Skip if any present, strict types (ultra-safe) |
 
 ### 🔹 `Debug` methods
@@ -823,6 +919,7 @@ go tool cover -html=coverage.out
 go run examples/policy_example.go
 go run examples/mapstyle_example.go
 go run examples/env_example.go
+go run examples/reload_keys_example.go
 
 # Run error handling demo
 go run tests/test_errors.go
@@ -830,7 +927,6 @@ go run tests/test_errors.go
 # Test map style functionality
 go run tests/test_mapstyle.go
 ```
-
 
 ## 🧰 Lint — static DML checks
 
@@ -848,6 +944,7 @@ A simple file-based linter was added to catch common DML mistakes early.
   ```
 
 Checks performed:
+
 - ❌ MAP_TRAILING_COMMA — trailing comma after last map element
 - ❌ TYPED_MAP_ENTRY — typed entries inside maps (e.g. `string port = ...`)
 - ⚠️ MIXED_MAP_STYLE — mixed style: maps and root-level vars used together
@@ -868,6 +965,7 @@ for _, it := range issues {
 ```
 
 Files:
+
 - Implementation: `dml/lint.go`
 - Tests: `dml/lint_test.go`
 

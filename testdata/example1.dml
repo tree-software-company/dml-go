@@ -5,7 +5,11 @@ map server = {
 };
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 string name = "MyApp";
+=======
+string name = "MyAp";
+>>>>>>> Stashed changes
 =======
 string name = "MyAp";
 >>>>>>> Stashed changes

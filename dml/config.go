@@ -361,6 +361,8 @@ func (c *Config) GetInt(key string) int {
 =======
 	fmt.Printf("📦 Current config data: %#v\n", cfg.data)
 
+	fmt.Printf("📦 Current config data: %#v\n", cfg.data)
+
 	var defaultKeys []string
 	for key, defValue := range defaults {
 		if forceOverride {
@@ -372,6 +374,9 @@ func (c *Config) GetInt(key string) int {
 				setNestedKey(cfg.data, key, defValue)
 				defaultKeys = append(defaultKeys, key)
 			}
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 		}
 	}
@@ -459,6 +464,7 @@ func (c *Config) ValidateRequired(keys ...string) error {
 	return nil
 }
 
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
 func (c *Config) ValidateRequiredTyped(rules map[string]string) error {
 	for key, expectedType := range rules {
@@ -594,6 +600,8 @@ func (c *Config) dumpValue(builder *strings.Builder, key string, value any, styl
 	}
 }
 =======
+=======
+>>>>>>> Stashed changes
 func (c *Config) SetMetaDefaults(keys []string) {
 	c.defaultKeys = make(map[string]bool)
 	for _, k := range keys {
@@ -621,6 +629,7 @@ func (c *Config) dumpMap(builder *strings.Builder, key string, m map[string]any,
 			}
 			builder.WriteString("\n")
 		}
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
 		builder.WriteString("};\n\n")
 	} else if style == MapStyleFlat {
@@ -818,6 +827,8 @@ func (c *Config) FromJSON(jsonStr string) error {
 	return json.Unmarshal([]byte(jsonStr), &c.data)
 }
 =======
+=======
+>>>>>>> Stashed changes
 
 		next, ok := data[part].(map[string]any)
 		if !ok {
@@ -846,4 +857,7 @@ func isZero(val any) bool {
 	}
 }
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes

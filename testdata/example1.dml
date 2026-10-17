@@ -4,4 +4,8 @@ map server = {
   "timeout": "test2"
 };
 
+<<<<<<< Updated upstream
 string name = "MyApp";
+=======
+string name = "MyAp";
+>>>>>>> Stashed changes

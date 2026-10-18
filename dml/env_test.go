@@ -29,11 +29,6 @@ APP_DEBUG=true
     }
     tmpfile.Close()
     
-    err = LoadEnv(tmpfile.Name())
-    if err != nil {
-        t.Fatalf("LoadEnv failed: %v", err)
-    }
-    
     tests := map[string]string{
         "DB_HOST":     "localhost",
         "DB_PORT":     "5432",
@@ -42,10 +37,27 @@ APP_DEBUG=true
         "APP_NAME":    "MyApp",
         "APP_DEBUG":   "true",
     }
-    
+
+    for key := range tests {
+        t.Setenv(key, "")
+    }
+    t.Cleanup(func() {
+        for key := range tests {
+            delete(fileEnv, key)
+        }
+    })
+
+    err = LoadEnv(tmpfile.Name())
+    if err != nil {
+        t.Fatalf("LoadEnv failed: %v", err)
+    }
+
     for key, expected := range tests {
-        if got := os.Getenv(key); got != expected {
+        if got := GetEnv(key, ""); got != expected {
             t.Errorf("Expected %s=%s, got %s", key, expected, got)
+        }
+        if got := os.Getenv(key); got != "" {
+            t.Errorf("Expected %s not to be exported to the process environment", key)
         }
     }
 }

@@ -39,5 +39,5 @@ examples/  testdata/     runnable examples and fixtures
 ## Known debt (remove an item once fixed; do not copy these patterns)
 
 - `tests/test_*.go` are not `_test.go` files, so `go test` never runs them.
-- Eight files fail `gofmt -l` (for example `dml/error.go`, `dml/config_test.go`); `.DS_Store` is tracked.
+- Eight files fail `gofmt -l` (for example `dml/error.go`, `dml/config_test.go`).
 - `internal/jar.go` pins DML 0.6.1 while DML is at 0.8.1.

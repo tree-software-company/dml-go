@@ -2,6 +2,8 @@ package dml
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -191,4 +193,73 @@ string host = "localhost";`
 	if !config.GetBool("debug") {
 		t.Error("Expected debug to be true")
 	}
+}
+
+func requirePosixPermissions(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not supported on Windows")
+	}
+}
+
+func requireFileMode(t *testing.T, path string, expected os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Failed to stat %s: %v", path, err)
+	}
+	if info.Mode().Perm() != expected {
+		t.Errorf("Expected mode %o, got %o", expected, info.Mode().Perm())
+	}
+}
+
+func TestSaveToFileCreatesOwnerOnlyFile(t *testing.T) {
+	requirePosixPermissions(t)
+
+	path := filepath.Join(t.TempDir(), "new.dml")
+	config := &Config{data: map[string]any{"host": "localhost"}}
+
+	if err := config.SaveToFile(path); err != nil {
+		t.Fatalf("SaveToFile failed: %v", err)
+	}
+
+	requireFileMode(t, path, 0o600)
+}
+
+func TestSaveToFileTightensExistingFilePermissions(t *testing.T) {
+	requirePosixPermissions(t)
+
+	path := filepath.Join(t.TempDir(), "existing.dml")
+	if err := os.WriteFile(path, []byte(`string host = "localhost";`), 0o644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Failed to chmod test file: %v", err)
+	}
+
+	config := &Config{data: map[string]any{"host": "example.org"}}
+	if err := config.SaveToFile(path); err != nil {
+		t.Fatalf("SaveToFile failed: %v", err)
+	}
+
+	requireFileMode(t, path, 0o600)
+}
+
+func TestApplyDefaultsTightensExistingFilePermissions(t *testing.T) {
+	requirePosixPermissions(t)
+
+	path := filepath.Join(t.TempDir(), "defaults.dml")
+	if err := os.WriteFile(path, []byte(`string host = "localhost";`), 0o644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Failed to chmod test file: %v", err)
+	}
+
+	err := ApplyDefaults(path, map[string]any{"timeout": 30}, DefaultPolicy{OnlyMissing: true})
+	if err != nil {
+		t.Fatalf("ApplyDefaults failed: %v", err)
+	}
+
+	requireFileMode(t, path, 0o600)
 }

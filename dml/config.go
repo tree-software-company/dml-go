@@ -354,8 +354,19 @@ func typesMatch(a, b any) bool {
 }
 
 func (c *Config) SaveToFile(filepath string) error {
-	content := c.Dump()
-	return os.WriteFile(filepath, []byte(content), 0644)
+	file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.WriteString(c.Dump()); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func (c *Config) Dump() string {

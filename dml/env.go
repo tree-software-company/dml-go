@@ -25,6 +25,10 @@ func isSensitiveEnvKey(key string) bool {
 }
 
 func LoadEnv(filepath string) error {
+	if err := validatePath(filepath); err != nil {
+		return err
+	}
+
 	file, err := os.Open(filepath)
 	if err != nil {
 		return fmt.Errorf("failed to open .env file: %w", err)
@@ -65,6 +69,10 @@ func LoadEnv(filepath string) error {
 }
 
 func LoadEnvIfExists(filepath string) error {
+	if err := validatePath(filepath); err != nil {
+		return err
+	}
+
 	if _, err := os.Stat(filepath); os.IsNotExist(err) {
 		return nil
 	}

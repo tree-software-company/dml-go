@@ -75,6 +75,10 @@ func New() *Config {
 }
 
 func NewConfig(filepath string) (*Config, error) {
+	if err := validatePath(filepath); err != nil {
+		return nil, err
+	}
+
 	content, err := os.ReadFile(filepath)
 	if err != nil {
 		return nil, err
@@ -89,6 +93,10 @@ func NewConfig(filepath string) (*Config, error) {
 }
 
 func (c *Config) ReloadKeys(filepath string, keys ...string) error {
+	if err := validatePath(filepath); err != nil {
+		return err
+	}
+
 	content, err := os.ReadFile(filepath)
 	if err != nil {
 		return err
@@ -354,6 +362,10 @@ func typesMatch(a, b any) bool {
 }
 
 func (c *Config) SaveToFile(filepath string) error {
+	if err := validatePath(filepath); err != nil {
+		return err
+	}
+
 	file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -593,6 +605,10 @@ func ClearCache() {
 }
 
 func Load(filepath string) (map[string]any, error) {
+	if err := validatePath(filepath); err != nil {
+		return nil, err
+	}
+
 	content, err := os.ReadFile(filepath)
 	if err != nil {
 		return nil, err

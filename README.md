@@ -804,6 +804,8 @@ func main() {
 | `SetMapStyle(style MapStyle)`             | Sets global map dump style (JSON/Flat/Auto)                        |
 | `GetMapStyle()`                           | Returns current global map style                                   |
 
+Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `ReloadKeys`, `ApplyDefaults`, `Lint`, `LoadEnv`, `LoadEnvIfExists`, `Config.ReloadKeys`, `Config.SaveToFile`) rejects empty paths, paths containing a NUL byte and paths containing a `..` segment (for example `../../etc/passwd`). The returned error wraps `dml.ErrInvalidPath`, so it can be checked with `errors.Is(err, dml.ErrInvalidPath)`.
+
 ### 🔹 `Config` methods
 
 | Method                                           | Description                                                      |

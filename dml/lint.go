@@ -16,6 +16,10 @@ type LintIssue struct {
 }
 
 func Lint(path string) ([]LintIssue, error) {
+	if err := validatePath(path); err != nil {
+		return nil, err
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

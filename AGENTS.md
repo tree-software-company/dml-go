@@ -29,6 +29,7 @@ examples/  testdata/     runnable examples and fixtures
 ## Security (non-negotiable)
 
 - The jar is downloaded only from a pinned version URL and verified against a pinned SHA256 before use; bump version and hash together.
+- The download connection is also TLS-pinned by SPKI hash per host in `internal/pins.go`; redirects must stay on https. Update the pins when GitHub changes its CA or CDN host (`DML_LIVE_PIN_TEST=1 go test ./internal -run Live` detects stale pins).
 - Error messages and logs never contain environment variable values or file contents. Interpolation of env values is explicit and allow-listed.
 - Treat every `.dml` input as untrusted: bound sizes and depth, reject path traversal when resolving files.
 - Never commit secrets or `.env` files; `testdata/.env.example` holds placeholders only. Do not commit `.DS_Store`.
@@ -38,5 +39,5 @@ examples/  testdata/     runnable examples and fixtures
 ## Known debt (remove an item once fixed; do not copy these patterns)
 
 - `tests/test_*.go` are not `_test.go` files, so `go test` never runs them.
-- Ten files fail `gofmt -l` (for example `dml/env.go`, `dml/error.go`, `internal/jar.go`); `.DS_Store` is tracked.
+- Eight files fail `gofmt -l` (for example `dml/error.go`, `dml/config_test.go`); `.DS_Store` is tracked.
 - `internal/jar.go` pins DML 0.6.1 while DML is at 0.8.1.

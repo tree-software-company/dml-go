@@ -685,6 +685,116 @@ log.Printf("server.host = %v", srv["host"])
 
 ---
 
+## 👀 Live Reload — `Watch`
+
+`Watch` is **opt-in**. It polls one `.dml` file and, when it changes, parses it
+into a brand-new `Config` and swaps that in under a `sync.RWMutex`. Your service
+keeps running and never needs a restart.
+
+### Signatures
+
+```go
+type WatchOptions struct {
+    Interval    time.Duration
+    MaxFileSize int64
+    OnReload    func(*Config)
+    OnError     func(error)
+}
+
+func Watch(filepath string, opts WatchOptions) (*Watcher, error)
+
+func (w *Watcher) Config() *Config
+func (w *Watcher) Get(key string) (any, bool)
+func (w *Watcher) GetString(key string) string
+func (w *Watcher) GetInt(key string) int
+func (w *Watcher) GetFloat(key string) float64
+func (w *Watcher) GetBool(key string) bool
+func (w *Watcher) GetList(key string) []any
+func (w *Watcher) GetMap(key string) map[string]any
+func (w *Watcher) Has(key string) bool
+func (w *Watcher) Keys() []string
+func (w *Watcher) Stop()
+```
+
+### Options
+
+| Field         | Default | Meaning                                                      |
+| ------------- | ------- | ------------------------------------------------------------ |
+| `Interval`    | `1s`    | How often the file is checked                                |
+| `MaxFileSize` | `10 MiB` | Larger files are rejected with `ErrWatchFileTooLarge`       |
+| `OnReload`    | none    | Called with the new `*Config` after every successful reload  |
+| `OnError`     | none    | Called when a reload fails; the previous config stays active |
+
+### Behaviour
+
+| Scenario                                 | Result                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| File edited in place                     | New `Config` is installed once the file is stable for one interval  |
+| File replaced by rename (atomic save)    | Detected, because the file identity changes                         |
+| New content has a syntax / type error    | `OnError` is called once, last good config stays active             |
+| File deleted                             | `OnError` is called once, last good config stays active             |
+| File reappears or is fixed               | Reloaded and `OnReload` is called                                   |
+| File larger than `MaxFileSize`           | `OnError` receives `ErrWatchFileTooLarge`, last good config stays   |
+| Invalid path (`..`, NUL, empty)          | `Watch` returns an error wrapping `ErrInvalidPath`                  |
+
+### Thread safety
+
+- The `Watcher` getters are safe to call from any goroutine while reloads happen.
+- `Config()` returns an immutable snapshot. A reload never modifies a snapshot you
+  already hold; it installs a new one. Read from a snapshot freely, but do not
+  call `Set` on it and do not modify maps or slices returned by `GetMap` /
+  `GetList`.
+- `OnReload` and `OnError` run on the watcher goroutine outside the lock, so they
+  may read from the watcher. Do not call `Stop` from inside a callback.
+- `Stop` is idempotent, waits for the watcher goroutine to finish, and the last
+  config stays readable afterwards.
+
+### Errors never contain file contents
+
+Parse errors passed to `OnError` (and returned by `Watch` for the initial load)
+are `*DMLError` values that keep `Type`, `Line` and `Column` but carry a fixed
+message and no source line, so values from the file never reach your logs. Open
+the file at the reported position to see the problem.
+
+### Example
+
+```go
+package main
+
+import (
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/tree-software-company/dml-go/dml"
+)
+
+func main() {
+    watcher, err := dml.Watch("config.dml", dml.WatchOptions{
+        Interval: 2 * time.Second,
+        OnReload: func(cfg *dml.Config) {
+            log.Printf("config reloaded, %d keys", len(cfg.Keys()))
+        },
+        OnError: func(err error) {
+            log.Printf("config reload failed: %v", err)
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer watcher.Stop()
+
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte(watcher.GetString("app_version")))
+    })
+    log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+A runnable version lives in `examples/watch_example.go`.
+
+---
+
 ## 🔍 Error Handling & Validation
 
 DML-Go provides comprehensive error handling with detailed context about syntax and validation errors.
@@ -799,7 +909,7 @@ func main() {
 | `Reload(file string)`                     | Forces re-parsing and updates the cache for a file                 |
 | `ReloadKeys(file string, keys ...string)` | Partially reloads only the given top-level keys in the cache       |
 | `ClearCache()`                            | Clears all cached parsed files from memory                         |
-| `Watch(file)`                             | Live reload of dml file                                            |
+| `Watch(file, WatchOptions)`               | Opt-in live reload of a dml file into a thread-safe `Watcher`      |
 | `ApplyDefaults(file, defaults, policy)`   | Apply default values with policy control                           |
 | `SetMapStyle(style MapStyle)`             | Sets global map dump style (JSON/Flat/Auto)                        |
 | `GetMapStyle()`                           | Returns current global map style                                   |

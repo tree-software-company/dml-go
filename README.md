@@ -628,6 +628,66 @@ func main() {
 
 ---
 
+## 🧱 Layered Configuration — `LoadFiles`, `Merge`, `SetFromString`
+
+Keep one base file and override it per environment (`config.dml`, then `config.prod.dml`), then let environment variables and CLI flags have the last word.
+
+Precedence, lowest to highest:
+
+1. Files, in the order given (a later file overrides an earlier one)
+2. Environment variables (`EnvOverride`, `--env-prefix`)
+3. Explicit assignments (`SetFromString`, `--set`)
+
+### Library
+
+```go
+cfg, err := dml.LoadFiles("config.dml", "config.prod.dml")
+if err != nil {
+    log.Fatal(err)
+}
+
+cfg.EnvOverride("APP")
+
+if err := cfg.SetFromString("server.port=7000"); err != nil {
+    log.Fatal(err)
+}
+```
+
+`Config.Merge(other)` does the same file-to-file step on two `*Config` values you already have.
+
+### Merge rules
+
+- Maps are merged key by key, recursively, so sibling keys from the base file survive.
+- Scalars and lists from the overriding file replace the base value; lists are not appended.
+- If the overriding file uses a different type for a key, the overriding file wins.
+- The result never shares maps or lists with the merged-in config.
+- An explicit `@mapStyle` in the overriding file replaces the base map style.
+
+### `SetFromString`
+
+`key=value` is split on the first `=`; the key may be dotted (`server.port`).
+
+- If the key exists, the value is converted to its type (`int`, `float`, `bool` or `string`); a value that does not fit returns `dml.ErrInvalidOverride` without echoing the value.
+- A key that holds a map or list cannot be replaced from a string.
+- A new key gets an inferred type: `int`, then `float`, then `true`/`false`, otherwise `string`.
+- A malformed assignment returns `dml.ErrInvalidAssignment`.
+
+### Safety
+
+Each file passes the same path checks as `NewConfig` (`dml.ErrInvalidPath`) and is limited to 10 MiB (`dml.ErrLayerTooLarge`). Parse errors keep `Type`, `Line` and `Column` but carry a fixed message and no source line, so values from override files such as `config.prod.dml` never reach your logs. `LoadFiles()` without paths returns `dml.ErrNoLayers`.
+
+### CLI
+
+```bash
+go run ./cmd/dml testdata/config.base.dml testdata/config.prod.dml
+APP_SERVER_PORT=9000 go run ./cmd/dml --env-prefix APP testdata/config.base.dml testdata/config.prod.dml
+go run ./cmd/dml --set server.port=7000 --set debug=true testdata/config.base.dml testdata/config.prod.dml
+```
+
+`--set` can be repeated, and flags may appear before or after the file names. `--env-prefix` needs a non-empty prefix: `APP` maps `server.port` to `APP_SERVER_PORT`. Only keys already present in the loaded files are overridden by environment variables; use `--set` to add new keys.
+
+---
+
 ## ♻️ Partial Reload — `ReloadKeys`
 
 For **long-running Go services** you often want to hot-reload a small subset of
@@ -818,7 +878,7 @@ func main() {
 }
 ```
 
-A runnable version lives in `examples/watch_example.go`.
+A runnable version lives in `examples/watch/main.go`.
 
 ---
 
@@ -932,6 +992,7 @@ func main() {
 | ----------------------------------------- | ------------------------------------------------------------------ |
 | `Load(file string)`                       | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
 | `NewConfig(file string)`                  | Loads and parses a `.dml` file into a `Config` structure           |
+| `LoadFiles(files ...string)`              | Loads several `.dml` files and merges them, later files win        |
 | `Cache(file string)`                      | Loads and caches parsed data in memory                             |
 | `Reload(file string)`                     | Forces re-parsing and updates the cache for a file                 |
 | `ReloadKeys(file string, keys ...string)` | Partially reloads only the given top-level keys in the cache       |
@@ -957,6 +1018,8 @@ Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `
 | `MustString(key string)`                         | Returns a string value or panics if missing                      |
 | `Has(key string)`                                | Checks if a key exists                                           |
 | `Keys()`                                         | Returns a sorted list of top-level keys                          |
+| `Merge(other *Config)`                           | Deep-merges another config into this one, `other` wins           |
+| `SetFromString(assignment string)`               | Applies a `key=value` override, typed by the existing key        |
 | `Dump()`                                         | Dumps the entire parsed data in DML format (respects map style)  |
 | `SetMapStyle(style MapStyle)`                    | Sets map style for this specific config                          |
 | `ReloadKeys(file string, keys ...string)`        | Hot-reloads only the specified top-level keys from a file        |
@@ -1055,16 +1118,17 @@ go test ./dml -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
 # Run examples
-go run examples/policy_example.go
-go run examples/mapstyle_example.go
-go run examples/env_example.go
-go run examples/reload_keys_example.go
+go run ./examples/policy
+go run ./examples/mapstyle
+go run ./examples/env
+go run ./examples/reload_keys
+go run ./examples/watch
 
 # Run error handling demo
-go run tests/test_errors.go
+go run ./examples/errors
 
 # Test map style functionality
-go run tests/test_mapstyle.go
+go run ./examples/mapstyle_dump
 ```
 
 ## 🧰 Lint — static DML checks

@@ -25,9 +25,7 @@ jobs:
       - run:
           name: Verify examples compile
           command: |
-            go build -o /dev/null ./examples/env_example.go
-            go build -o /dev/null ./examples/watch_example.go
-            go build -o /dev/null ./test_errors.go
+            go build ./...
 
       - store_artifacts:
           path: bin

@@ -8,7 +8,8 @@ import (
 )
 
 func main() {
-	fmt.Println("=== DML Map Style Examples ===\n")
+	fmt.Println("=== DML Map Style Examples ===")
+	fmt.Println()
 
 	fmt.Println("1. Global JSON Style:")
 	dml.SetMapStyle(dml.MapStyleJSON)

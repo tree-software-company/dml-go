@@ -8,7 +8,8 @@ import (
 )
 
 func main() {
-    fmt.Println("=== DML Error Handling Tests ===\n")
+    fmt.Println("=== DML Error Handling Tests ===")
+    fmt.Println()
     
     fmt.Println("Test 1: Invalid string format")
     testError(`string name = invalid;`)

@@ -1,0 +1,15 @@
+string app_name = "tree";
+bool debug = true;
+int workers = 2;
+list allowed_hosts = ["localhost", "example.com"];
+
+map server = {
+  "name": "BeautyApp",
+  "port": 8080,
+  "timeout": 15
+};
+
+map database = {
+  "host": "localhost",
+  "port": 5432
+};

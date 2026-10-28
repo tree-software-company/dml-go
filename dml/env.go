@@ -90,8 +90,11 @@ func lookupEnv(key string) string {
 }
 
 func ExpandEnv(s string) string {
-	return os.Expand(s, func(key string) string {
-		return lookupEnv(key)
+	return os.Expand(s, func(ref string) string {
+		if name, fallback, found := strings.Cut(ref, ":-"); found && name != "" {
+			return GetEnv(name, fallback)
+		}
+		return lookupEnv(ref)
 	})
 }
 

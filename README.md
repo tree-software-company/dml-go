@@ -498,6 +498,33 @@ fmt.Println(cfg.GetString("db_url"))
 // Output: postgresql://admin:secret123@localhost:5432/myapp
 ```
 
+**Default values:** `${VAR:-default}` expands to `default` when `VAR` is unset or empty (values from `.env` count too):
+
+```dml
+string api_key = "${API_KEY:-default_key}";
+string db_url = "postgresql://${DB_USER:-admin}@${DB_HOST:-localhost}:5432/${DB_NAME:-app}";
+string optional_token = "${OPTIONAL_TOKEN:-}";
+list allowed_hosts = ["localhost", "${EXTRA_HOST:-example.com}"];
+map limits = {"region": "${REGION:-eu-west-1}"};
+```
+
+Limitations:
+
+- The default ends at the first `}`, so nesting such as `${A:-${B}}` is not supported.
+- The default is inserted literally; `${A:-$B}` yields the text `$B`.
+- Expansion runs after parsing, so defaults work in `string` values, list items and map values, not in `int`, `float` or `bool` declarations.
+- Do not put a comma in a default inside a `list`.
+- Only the `:-` form exists; `-`, `:=` and `:?` are not supported. The `$VAR` form has no default syntax.
+
+**CLI:** `dml file.dml` prints the file unchanged. Add `--env` to load `.env` from the current directory and expand variables before dumping:
+
+```bash
+go run ./cmd/dml --env testdata/config-with-defaults.dml
+API_KEY=real_key go run ./cmd/dml --env testdata/config-with-defaults.dml
+```
+
+The dump contains the expanded values, so avoid running it on files that reference real secrets.
+
 ---
 
 ### Environment Variable Helpers

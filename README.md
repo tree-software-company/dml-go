@@ -882,6 +882,106 @@ A runnable version lives in `examples/watch/main.go`.
 
 ---
 
+## 🧬 Typed Unmarshaling
+
+Bind a parsed config straight into a Go struct. The target type is a generic type parameter, so the result is typed at compile time and no `interface{}` pointer or type assertion is needed.
+
+### Signatures
+
+```go
+func Unmarshal[T any](data []byte) (*T, error)
+func UnmarshalFile[T any](path string) (*T, error)
+func Decode[T any](c *Config) (*T, error)
+```
+
+Go methods cannot have type parameters, so these are package-level functions and the type argument is always written explicitly: `dml.Unmarshal[AppConfig](data)`.
+
+- `Unmarshal` parses DML bytes (up to 10 MiB) and binds the result into a new `T`.
+- `UnmarshalFile` does the same for a file. Path validation, the size limit and error redaction match `LoadFiles`.
+- `Decode` binds an existing `*Config`, for example after `LoadFiles`, `LoadWithEnv()` or `SetFromString`. Environment expansion is never implicit, call `LoadWithEnv()` before `Decode` when you want it.
+- On any error the returned pointer is `nil`, never a half-filled struct.
+
+### Example
+
+```go
+type Database struct {
+	Host string `dml:"host"`
+	Port int    `dml:"port"`
+}
+
+type AppConfig struct {
+	Name     string   `dml:"name,required"`
+	Tags     []string `dml:"tags"`
+	Database Database `dml:"database"`
+}
+
+data := []byte(`
+string name = "BeautyApp";
+list tags = ["api", "web"];
+map database = {"host": "localhost", "port": 5432};
+`)
+
+cfg, err := dml.Unmarshal[AppConfig](data)
+if err != nil {
+	log.Fatal(err)
+}
+
+fmt.Println(cfg.Database.Port)
+```
+
+A runnable version lives in `examples/unmarshal/main.go`.
+
+### Behaviour
+
+| Go field type                              | Accepted DML values                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `string`, `bool`                           | exactly a string, exactly a boolean                                                  |
+| `int`, `int8` ... `int64`                  | an integer, or a float with no fraction, as long as it fits the field                |
+| `uint`, `uint8` ... `uint64`               | a non-negative integer, or a float with no fraction, as long as it fits the field    |
+| `float32`, `float64`                       | a float, or an integer that converts without losing precision                        |
+| struct                                     | a map                                                                                |
+| `*T`                                       | anything `T` accepts, allocated only when the key is present                         |
+| slice, array                               | a list, element by element (an array needs exactly as many items)                    |
+| `map[string]T`                             | a map, value by value                                                                |
+| `any`                                      | a copy of whatever DML produced                                                      |
+
+- A struct field is matched by its `dml:"name"` tag, or by the field name when there is no tag. An exact match wins, otherwise the match ignores case, so `Port` finds `port`.
+- `dml:"-"` and unexported fields are skipped. `dml:"name,required"` fails with `ErrMissingRequired` when the key is absent or null.
+- A missing key keeps the zero value and an unknown key is ignored. A pointer field tells a missing key (`nil`) from a zero value (pointer to `0`).
+- Strings, numbers and booleans are never converted into each other: `"8080"` does not fit an `int` field.
+- A fractional or non-finite number into an integer field is `ErrTypeMismatch`. An integral number that is too large is `ErrOutOfRange`.
+- `T` may also be `map[string]any`, `any` or a pointer to a struct.
+- The result never shares maps or slices with the `Config`.
+
+### Errors
+
+Binding failures are `*BindError` values that carry the path of the field, for example `server.port` or `servers[2].name`, and wrap one of the sentinels listed under [Error types](#-error-types). They never contain the offending value, only Go type names.
+
+```go
+_, err := dml.Unmarshal[AppConfig]([]byte(`
+string name = "BeautyApp";
+string database.port = "not a number";
+`))
+
+var bindErr *dml.BindError
+if errors.As(err, &bindErr) {
+	fmt.Println(bindErr.Path, errors.Is(err, dml.ErrTypeMismatch))
+}
+```
+
+Syntax errors in the DML text surface as a redacted `*DMLError`, the same as in `LoadFiles`.
+
+### Limitations
+
+- An embedded struct is bound like an ordinary named field, it is not flattened.
+- Not supported: `time.Duration` from a string, `encoding.TextUnmarshaler`, dotted tag names, a strict mode that rejects unknown keys, and default values.
+- The DML parser does not produce lists of maps or maps nested inside map literals. Use dotted names such as `int server.db.port = 5432;` to fill nested structs.
+- A field of an unsupported type (channel, function, complex number, non-empty interface, map with non-string keys) is reported only when its key is present with a value.
+- Data nested deeper than 128 levels fails with `ErrTooDeep`.
+- `Decode` reads the `Config`, so do not call it while another goroutine writes to the same `Config`.
+
+---
+
 ## 🔍 Error Handling & Validation
 
 DML-Go provides comprehensive error handling with detailed context about syntax and validation errors.
@@ -993,6 +1093,9 @@ func main() {
 | `Load(file string)`                       | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
 | `NewConfig(file string)`                  | Loads and parses a `.dml` file into a `Config` structure           |
 | `LoadFiles(files ...string)`              | Loads several `.dml` files and merges them, later files win        |
+| `Unmarshal[T any](data []byte)`           | Parses DML bytes into a typed `*T`                                 |
+| `UnmarshalFile[T any](path string)`       | Loads a `.dml` file into a typed `*T`                              |
+| `Decode[T any](c *Config)`                | Binds an existing `Config` into a typed `*T`                       |
 | `Cache(file string)`                      | Loads and caches parsed data in memory                             |
 | `Reload(file string)`                     | Forces re-parsing and updates the cache for a file                 |
 | `ReloadKeys(file string, keys ...string)` | Partially reloads only the given top-level keys in the cache       |
@@ -1002,7 +1105,7 @@ func main() {
 | `SetMapStyle(style MapStyle)`             | Sets global map dump style (JSON/Flat/Auto)                        |
 | `GetMapStyle()`                           | Returns current global map style                                   |
 
-Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `ReloadKeys`, `ApplyDefaults`, `Lint`, `LoadEnv`, `LoadEnvIfExists`, `Config.ReloadKeys`, `Config.SaveToFile`) rejects empty paths, paths containing a NUL byte and paths containing a `..` segment (for example `../../etc/passwd`). The returned error wraps `dml.ErrInvalidPath`, so it can be checked with `errors.Is(err, dml.ErrInvalidPath)`.
+Every function that takes a file path (`Load`, `NewConfig`, `UnmarshalFile`, `Cache`, `Reload`, `ReloadKeys`, `ApplyDefaults`, `Lint`, `LoadEnv`, `LoadEnvIfExists`, `Config.ReloadKeys`, `Config.SaveToFile`) rejects empty paths, paths containing a NUL byte and paths containing a `..` segment (for example `../../etc/passwd`). The returned error wraps `dml.ErrInvalidPath`, so it can be checked with `errors.Is(err, dml.ErrInvalidPath)`.
 
 ### 🔹 `Config` methods
 
@@ -1050,6 +1153,13 @@ Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `
 | `ErrorTypeSyntax`     | Syntax errors (missing operators, brackets, etc.) |
 | `ErrorTypeValidation` | Validation errors (invalid identifiers, etc.)     |
 | `ErrorTypeType`       | Type mismatch errors (wrong value format)         |
+| `BindError`           | Unmarshal error with the path of the field        |
+| `ErrTypeMismatch`     | Value kind does not match the field type          |
+| `ErrOutOfRange`       | Number does not fit the field type                |
+| `ErrUnsupportedType`  | Field type cannot be bound                        |
+| `ErrMissingRequired`  | Key marked `required` is absent or null           |
+| `ErrTooDeep`          | Data nested deeper than the limit                 |
+| `ErrNilConfig`        | `Decode` was called with a nil config             |
 
 ### 🔹 Internal helpers
 
@@ -1113,6 +1223,12 @@ go test ./dml -run TestDefaultPolicy -v
 # Run with coverage
 go test ./dml -cover
 
+# Run the typed unmarshaling tests
+go test ./dml -run 'Unmarshal|Decode|Bind' -v
+go test -race ./dml
+go test ./dml -run '^$' -bench 'Unmarshal|Decode' -benchmem
+go test ./dml -run '^$' -fuzz FuzzDecodeFromJSON -fuzztime 20s
+
 # Generate coverage report
 go test ./dml -coverprofile=coverage.out
 go tool cover -html=coverage.out
@@ -1123,6 +1239,7 @@ go run ./examples/mapstyle
 go run ./examples/env
 go run ./examples/reload_keys
 go run ./examples/watch
+go run ./examples/unmarshal
 
 # Run error handling demo
 go run ./examples/errors
@@ -1198,6 +1315,7 @@ The library includes comprehensive tests for:
 - ✅ Default policy behavior (Permissive/Strict/Conservative)
 - ✅ Type-safe default application
 - ✅ Policy violation detection
+- ✅ Typed unmarshaling (struct tags, numeric ranges, error paths, depth limits, fuzzing)
 
 ---
 

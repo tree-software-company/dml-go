@@ -9,7 +9,8 @@ import (
 )
 
 func main() {
-    fmt.Println("=== DML Environment Variables Integration ===\n")
+    fmt.Println("=== DML Environment Variables Integration ===")
+    fmt.Println()
 
     fmt.Println("📁 Example 1: Loading .env file")
     if err := dml.LoadEnvIfExists("testdata/.env.example"); err != nil {

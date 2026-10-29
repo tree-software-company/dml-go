@@ -1,0 +1,8 @@
+string api_key = "${API_KEY:-default_key}";
+string db_host = "${DB_HOST:-localhost}";
+string db_url = "postgresql://${DB_USER:-admin}@${DB_HOST:-localhost}:5432/${DB_NAME:-app}";
+string optional_token = "${OPTIONAL_TOKEN:-}";
+string app_name = "${APP_NAME:-MyApp}";
+string no_default = "${NO_DEFAULT_VAR}";
+list allowed_hosts = ["localhost", "${EXTRA_HOST:-example.com}"];
+map limits = {"region": "${REGION:-eu-west-1}"};

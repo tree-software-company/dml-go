@@ -498,6 +498,33 @@ fmt.Println(cfg.GetString("db_url"))
 // Output: postgresql://admin:secret123@localhost:5432/myapp
 ```
 
+**Default values:** `${VAR:-default}` expands to `default` when `VAR` is unset or empty (values from `.env` count too):
+
+```dml
+string api_key = "${API_KEY:-default_key}";
+string db_url = "postgresql://${DB_USER:-admin}@${DB_HOST:-localhost}:5432/${DB_NAME:-app}";
+string optional_token = "${OPTIONAL_TOKEN:-}";
+list allowed_hosts = ["localhost", "${EXTRA_HOST:-example.com}"];
+map limits = {"region": "${REGION:-eu-west-1}"};
+```
+
+Limitations:
+
+- The default ends at the first `}`, so nesting such as `${A:-${B}}` is not supported.
+- The default is inserted literally; `${A:-$B}` yields the text `$B`.
+- Expansion runs after parsing, so defaults work in `string` values, list items and map values, not in `int`, `float` or `bool` declarations.
+- Do not put a comma in a default inside a `list`.
+- Only the `:-` form exists; `-`, `:=` and `:?` are not supported. The `$VAR` form has no default syntax.
+
+**CLI:** `dml file.dml` prints the file unchanged. Add `--env` to load `.env` from the current directory and expand variables before dumping:
+
+```bash
+go run ./cmd/dml --env testdata/config-with-defaults.dml
+API_KEY=real_key go run ./cmd/dml --env testdata/config-with-defaults.dml
+```
+
+The dump contains the expanded values, so avoid running it on files that reference real secrets.
+
 ---
 
 ### Environment Variable Helpers
@@ -601,6 +628,66 @@ func main() {
 
 ---
 
+## 🧱 Layered Configuration — `LoadFiles`, `Merge`, `SetFromString`
+
+Keep one base file and override it per environment (`config.dml`, then `config.prod.dml`), then let environment variables and CLI flags have the last word.
+
+Precedence, lowest to highest:
+
+1. Files, in the order given (a later file overrides an earlier one)
+2. Environment variables (`EnvOverride`, `--env-prefix`)
+3. Explicit assignments (`SetFromString`, `--set`)
+
+### Library
+
+```go
+cfg, err := dml.LoadFiles("config.dml", "config.prod.dml")
+if err != nil {
+    log.Fatal(err)
+}
+
+cfg.EnvOverride("APP")
+
+if err := cfg.SetFromString("server.port=7000"); err != nil {
+    log.Fatal(err)
+}
+```
+
+`Config.Merge(other)` does the same file-to-file step on two `*Config` values you already have.
+
+### Merge rules
+
+- Maps are merged key by key, recursively, so sibling keys from the base file survive.
+- Scalars and lists from the overriding file replace the base value; lists are not appended.
+- If the overriding file uses a different type for a key, the overriding file wins.
+- The result never shares maps or lists with the merged-in config.
+- An explicit `@mapStyle` in the overriding file replaces the base map style.
+
+### `SetFromString`
+
+`key=value` is split on the first `=`; the key may be dotted (`server.port`).
+
+- If the key exists, the value is converted to its type (`int`, `float`, `bool` or `string`); a value that does not fit returns `dml.ErrInvalidOverride` without echoing the value.
+- A key that holds a map or list cannot be replaced from a string.
+- A new key gets an inferred type: `int`, then `float`, then `true`/`false`, otherwise `string`.
+- A malformed assignment returns `dml.ErrInvalidAssignment`.
+
+### Safety
+
+Each file passes the same path checks as `NewConfig` (`dml.ErrInvalidPath`) and is limited to 10 MiB (`dml.ErrLayerTooLarge`). Parse errors keep `Type`, `Line` and `Column` but carry a fixed message and no source line, so values from override files such as `config.prod.dml` never reach your logs. `LoadFiles()` without paths returns `dml.ErrNoLayers`.
+
+### CLI
+
+```bash
+go run ./cmd/dml testdata/config.base.dml testdata/config.prod.dml
+APP_SERVER_PORT=9000 go run ./cmd/dml --env-prefix APP testdata/config.base.dml testdata/config.prod.dml
+go run ./cmd/dml --set server.port=7000 --set debug=true testdata/config.base.dml testdata/config.prod.dml
+```
+
+`--set` can be repeated, and flags may appear before or after the file names. `--env-prefix` needs a non-empty prefix: `APP` maps `server.port` to `APP_SERVER_PORT`. Only keys already present in the loaded files are overridden by environment variables; use `--set` to add new keys.
+
+---
+
 ## ♻️ Partial Reload — `ReloadKeys`
 
 For **long-running Go services** you often want to hot-reload a small subset of
@@ -682,6 +769,216 @@ log.Printf("server.host = %v", srv["host"])
 | Large config, only a few keys change at runtime      | `ReloadKeys`          |
 | Config has computed/enriched keys you do not persist | `ReloadKeys`          |
 | First load at startup                                | `NewConfig` / `Cache` |
+
+---
+
+## 👀 Live Reload — `Watch`
+
+`Watch` is **opt-in**. It polls one `.dml` file and, when it changes, parses it
+into a brand-new `Config` and swaps that in under a `sync.RWMutex`. Your service
+keeps running and never needs a restart.
+
+### Signatures
+
+```go
+type WatchOptions struct {
+    Interval    time.Duration
+    MaxFileSize int64
+    OnReload    func(*Config)
+    OnError     func(error)
+}
+
+func Watch(filepath string, opts WatchOptions) (*Watcher, error)
+
+func (w *Watcher) Config() *Config
+func (w *Watcher) Get(key string) (any, bool)
+func (w *Watcher) GetString(key string) string
+func (w *Watcher) GetInt(key string) int
+func (w *Watcher) GetFloat(key string) float64
+func (w *Watcher) GetBool(key string) bool
+func (w *Watcher) GetList(key string) []any
+func (w *Watcher) GetMap(key string) map[string]any
+func (w *Watcher) Has(key string) bool
+func (w *Watcher) Keys() []string
+func (w *Watcher) Stop()
+```
+
+### Options
+
+| Field         | Default | Meaning                                                      |
+| ------------- | ------- | ------------------------------------------------------------ |
+| `Interval`    | `1s`    | How often the file is checked                                |
+| `MaxFileSize` | `10 MiB` | Larger files are rejected with `ErrWatchFileTooLarge`       |
+| `OnReload`    | none    | Called with the new `*Config` after every successful reload  |
+| `OnError`     | none    | Called when a reload fails; the previous config stays active |
+
+### Behaviour
+
+| Scenario                                 | Result                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| File edited in place                     | New `Config` is installed once the file is stable for one interval  |
+| File replaced by rename (atomic save)    | Detected, because the file identity changes                         |
+| New content has a syntax / type error    | `OnError` is called once, last good config stays active             |
+| File deleted                             | `OnError` is called once, last good config stays active             |
+| File reappears or is fixed               | Reloaded and `OnReload` is called                                   |
+| File larger than `MaxFileSize`           | `OnError` receives `ErrWatchFileTooLarge`, last good config stays   |
+| Invalid path (`..`, NUL, empty)          | `Watch` returns an error wrapping `ErrInvalidPath`                  |
+
+### Thread safety
+
+- The `Watcher` getters are safe to call from any goroutine while reloads happen.
+- `Config()` returns an immutable snapshot. A reload never modifies a snapshot you
+  already hold; it installs a new one. Read from a snapshot freely, but do not
+  call `Set` on it and do not modify maps or slices returned by `GetMap` /
+  `GetList`.
+- `OnReload` and `OnError` run on the watcher goroutine outside the lock, so they
+  may read from the watcher. Do not call `Stop` from inside a callback.
+- `Stop` is idempotent, waits for the watcher goroutine to finish, and the last
+  config stays readable afterwards.
+
+### Errors never contain file contents
+
+Parse errors passed to `OnError` (and returned by `Watch` for the initial load)
+are `*DMLError` values that keep `Type`, `Line` and `Column` but carry a fixed
+message and no source line, so values from the file never reach your logs. Open
+the file at the reported position to see the problem.
+
+### Example
+
+```go
+package main
+
+import (
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/tree-software-company/dml-go/dml"
+)
+
+func main() {
+    watcher, err := dml.Watch("config.dml", dml.WatchOptions{
+        Interval: 2 * time.Second,
+        OnReload: func(cfg *dml.Config) {
+            log.Printf("config reloaded, %d keys", len(cfg.Keys()))
+        },
+        OnError: func(err error) {
+            log.Printf("config reload failed: %v", err)
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer watcher.Stop()
+
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte(watcher.GetString("app_version")))
+    })
+    log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+A runnable version lives in `examples/watch/main.go`.
+
+---
+
+## 🧬 Typed Unmarshaling
+
+Bind a parsed config straight into a Go struct. The target type is a generic type parameter, so the result is typed at compile time and no `interface{}` pointer or type assertion is needed.
+
+### Signatures
+
+```go
+func Unmarshal[T any](data []byte) (*T, error)
+func UnmarshalFile[T any](path string) (*T, error)
+func Decode[T any](c *Config) (*T, error)
+```
+
+Go methods cannot have type parameters, so these are package-level functions and the type argument is always written explicitly: `dml.Unmarshal[AppConfig](data)`.
+
+- `Unmarshal` parses DML bytes (up to 10 MiB) and binds the result into a new `T`.
+- `UnmarshalFile` does the same for a file. Path validation, the size limit and error redaction match `LoadFiles`.
+- `Decode` binds an existing `*Config`, for example after `LoadFiles`, `LoadWithEnv()` or `SetFromString`. Environment expansion is never implicit, call `LoadWithEnv()` before `Decode` when you want it.
+- On any error the returned pointer is `nil`, never a half-filled struct.
+
+### Example
+
+```go
+type Database struct {
+	Host string `dml:"host"`
+	Port int    `dml:"port"`
+}
+
+type AppConfig struct {
+	Name     string   `dml:"name,required"`
+	Tags     []string `dml:"tags"`
+	Database Database `dml:"database"`
+}
+
+data := []byte(`
+string name = "BeautyApp";
+list tags = ["api", "web"];
+map database = {"host": "localhost", "port": 5432};
+`)
+
+cfg, err := dml.Unmarshal[AppConfig](data)
+if err != nil {
+	log.Fatal(err)
+}
+
+fmt.Println(cfg.Database.Port)
+```
+
+A runnable version lives in `examples/unmarshal/main.go`.
+
+### Behaviour
+
+| Go field type                              | Accepted DML values                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `string`, `bool`                           | exactly a string, exactly a boolean                                                  |
+| `int`, `int8` ... `int64`                  | an integer, or a float with no fraction, as long as it fits the field                |
+| `uint`, `uint8` ... `uint64`               | a non-negative integer, or a float with no fraction, as long as it fits the field    |
+| `float32`, `float64`                       | a float, or an integer that converts without losing precision                        |
+| struct                                     | a map                                                                                |
+| `*T`                                       | anything `T` accepts, allocated only when the key is present                         |
+| slice, array                               | a list, element by element (an array needs exactly as many items)                    |
+| `map[string]T`                             | a map, value by value                                                                |
+| `any`                                      | a copy of whatever DML produced                                                      |
+
+- A struct field is matched by its `dml:"name"` tag, or by the field name when there is no tag. An exact match wins, otherwise the match ignores case, so `Port` finds `port`.
+- `dml:"-"` and unexported fields are skipped. `dml:"name,required"` fails with `ErrMissingRequired` when the key is absent or null.
+- A missing key keeps the zero value and an unknown key is ignored. A pointer field tells a missing key (`nil`) from a zero value (pointer to `0`).
+- Strings, numbers and booleans are never converted into each other: `"8080"` does not fit an `int` field.
+- A fractional or non-finite number into an integer field is `ErrTypeMismatch`. An integral number that is too large is `ErrOutOfRange`.
+- `T` may also be `map[string]any`, `any` or a pointer to a struct.
+- The result never shares maps or slices with the `Config`.
+
+### Errors
+
+Binding failures are `*BindError` values that carry the path of the field, for example `server.port` or `servers[2].name`, and wrap one of the sentinels listed under [Error types](#-error-types). They never contain the offending value, only Go type names.
+
+```go
+_, err := dml.Unmarshal[AppConfig]([]byte(`
+string name = "BeautyApp";
+string database.port = "not a number";
+`))
+
+var bindErr *dml.BindError
+if errors.As(err, &bindErr) {
+	fmt.Println(bindErr.Path, errors.Is(err, dml.ErrTypeMismatch))
+}
+```
+
+Syntax errors in the DML text surface as a redacted `*DMLError`, the same as in `LoadFiles`.
+
+### Limitations
+
+- An embedded struct is bound like an ordinary named field, it is not flattened.
+- Not supported: `time.Duration` from a string, `encoding.TextUnmarshaler`, dotted tag names, a strict mode that rejects unknown keys, and default values.
+- The DML parser does not produce lists of maps or maps nested inside map literals. Use dotted names such as `int server.db.port = 5432;` to fill nested structs.
+- A field of an unsupported type (channel, function, complex number, non-empty interface, map with non-string keys) is reported only when its key is present with a value.
+- Data nested deeper than 128 levels fails with `ErrTooDeep`.
+- `Decode` reads the `Config`, so do not call it while another goroutine writes to the same `Config`.
 
 ---
 
@@ -795,16 +1092,20 @@ func main() {
 | ----------------------------------------- | ------------------------------------------------------------------ |
 | `Load(file string)`                       | Loads and parses a `.dml` file into a raw `map[string]interface{}` |
 | `NewConfig(file string)`                  | Loads and parses a `.dml` file into a `Config` structure           |
+| `LoadFiles(files ...string)`              | Loads several `.dml` files and merges them, later files win        |
+| `Unmarshal[T any](data []byte)`           | Parses DML bytes into a typed `*T`                                 |
+| `UnmarshalFile[T any](path string)`       | Loads a `.dml` file into a typed `*T`                              |
+| `Decode[T any](c *Config)`                | Binds an existing `Config` into a typed `*T`                       |
 | `Cache(file string)`                      | Loads and caches parsed data in memory                             |
 | `Reload(file string)`                     | Forces re-parsing and updates the cache for a file                 |
 | `ReloadKeys(file string, keys ...string)` | Partially reloads only the given top-level keys in the cache       |
 | `ClearCache()`                            | Clears all cached parsed files from memory                         |
-| `Watch(file)`                             | Live reload of dml file                                            |
+| `Watch(file, WatchOptions)`               | Opt-in live reload of a dml file into a thread-safe `Watcher`      |
 | `ApplyDefaults(file, defaults, policy)`   | Apply default values with policy control                           |
 | `SetMapStyle(style MapStyle)`             | Sets global map dump style (JSON/Flat/Auto)                        |
 | `GetMapStyle()`                           | Returns current global map style                                   |
 
-Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `ReloadKeys`, `ApplyDefaults`, `Lint`, `LoadEnv`, `LoadEnvIfExists`, `Config.ReloadKeys`, `Config.SaveToFile`) rejects empty paths, paths containing a NUL byte and paths containing a `..` segment (for example `../../etc/passwd`). The returned error wraps `dml.ErrInvalidPath`, so it can be checked with `errors.Is(err, dml.ErrInvalidPath)`.
+Every function that takes a file path (`Load`, `NewConfig`, `UnmarshalFile`, `Cache`, `Reload`, `ReloadKeys`, `ApplyDefaults`, `Lint`, `LoadEnv`, `LoadEnvIfExists`, `Config.ReloadKeys`, `Config.SaveToFile`) rejects empty paths, paths containing a NUL byte and paths containing a `..` segment (for example `../../etc/passwd`). The returned error wraps `dml.ErrInvalidPath`, so it can be checked with `errors.Is(err, dml.ErrInvalidPath)`.
 
 ### 🔹 `Config` methods
 
@@ -820,6 +1121,8 @@ Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `
 | `MustString(key string)`                         | Returns a string value or panics if missing                      |
 | `Has(key string)`                                | Checks if a key exists                                           |
 | `Keys()`                                         | Returns a sorted list of top-level keys                          |
+| `Merge(other *Config)`                           | Deep-merges another config into this one, `other` wins           |
+| `SetFromString(assignment string)`               | Applies a `key=value` override, typed by the existing key        |
 | `Dump()`                                         | Dumps the entire parsed data in DML format (respects map style)  |
 | `SetMapStyle(style MapStyle)`                    | Sets map style for this specific config                          |
 | `ReloadKeys(file string, keys ...string)`        | Hot-reloads only the specified top-level keys from a file        |
@@ -850,6 +1153,13 @@ Every function that takes a file path (`Load`, `NewConfig`, `Cache`, `Reload`, `
 | `ErrorTypeSyntax`     | Syntax errors (missing operators, brackets, etc.) |
 | `ErrorTypeValidation` | Validation errors (invalid identifiers, etc.)     |
 | `ErrorTypeType`       | Type mismatch errors (wrong value format)         |
+| `BindError`           | Unmarshal error with the path of the field        |
+| `ErrTypeMismatch`     | Value kind does not match the field type          |
+| `ErrOutOfRange`       | Number does not fit the field type                |
+| `ErrUnsupportedType`  | Field type cannot be bound                        |
+| `ErrMissingRequired`  | Key marked `required` is absent or null           |
+| `ErrTooDeep`          | Data nested deeper than the limit                 |
+| `ErrNilConfig`        | `Decode` was called with a nil config             |
 
 ### 🔹 Internal helpers
 
@@ -913,21 +1223,29 @@ go test ./dml -run TestDefaultPolicy -v
 # Run with coverage
 go test ./dml -cover
 
+# Run the typed unmarshaling tests
+go test ./dml -run 'Unmarshal|Decode|Bind' -v
+go test -race ./dml
+go test ./dml -run '^$' -bench 'Unmarshal|Decode' -benchmem
+go test ./dml -run '^$' -fuzz FuzzDecodeFromJSON -fuzztime 20s
+
 # Generate coverage report
 go test ./dml -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
 # Run examples
-go run examples/policy_example.go
-go run examples/mapstyle_example.go
-go run examples/env_example.go
-go run examples/reload_keys_example.go
+go run ./examples/policy
+go run ./examples/mapstyle
+go run ./examples/env
+go run ./examples/reload_keys
+go run ./examples/watch
+go run ./examples/unmarshal
 
 # Run error handling demo
-go run tests/test_errors.go
+go run ./examples/errors
 
 # Test map style functionality
-go run tests/test_mapstyle.go
+go run ./examples/mapstyle_dump
 ```
 
 ## 🧰 Lint — static DML checks
@@ -997,6 +1315,7 @@ The library includes comprehensive tests for:
 - ✅ Default policy behavior (Permissive/Strict/Conservative)
 - ✅ Type-safe default application
 - ✅ Policy violation detection
+- ✅ Typed unmarshaling (struct tags, numeric ranges, error paths, depth limits, fuzzing)
 
 ---
 

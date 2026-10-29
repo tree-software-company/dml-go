@@ -1,0 +1,12 @@
+bool debug = false;
+list allowed_hosts = ["app.example.com"];
+string region = "eu-west-1";
+
+map server = {
+  "port": 443,
+  "tls": true
+};
+
+map database = {
+  "host": "db.prod.example.com"
+};

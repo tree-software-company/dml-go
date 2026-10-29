@@ -9,7 +9,8 @@ import (
 )
 
 func main() {
-	fmt.Println("=== DML Default Policy Examples ===\n")
+	fmt.Println("=== DML Default Policy Examples ===")
+	fmt.Println()
 
 	testFile := "policy_test.dml"
 	defer os.Remove(testFile)

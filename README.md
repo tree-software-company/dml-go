@@ -13,6 +13,7 @@ It supports:
 - ✅ **Enforced map style (JSON/Flat/Auto) for consistent output**
 - ✅ **Smart default policies for configuration management**
 - ✅ Validation of required keys and types
+- ✅ **Declarative struct validation with `validate:"..."` tags (`required`, `min`, `max`, `len`, `oneof`, `dive`) that reports every violation at once**
 - ✅ In-memory caching for faster reads
 - ✅ Manual reload and clear cache functionality
 - ✅ **Partial reload with `ReloadKeys` — hot-reload only selected keys (perfect for long-running services)**
@@ -786,6 +787,7 @@ type WatchOptions struct {
     MaxFileSize int64
     OnReload    func(*Config)
     OnError     func(error)
+    Validate    func(*Config) error
 }
 
 func Watch(filepath string, opts WatchOptions) (*Watcher, error)
@@ -811,6 +813,7 @@ func (w *Watcher) Stop()
 | `MaxFileSize` | `10 MiB` | Larger files are rejected with `ErrWatchFileTooLarge`       |
 | `OnReload`    | none    | Called with the new `*Config` after every successful reload  |
 | `OnError`     | none    | Called when a reload fails; the previous config stays active |
+| `Validate`    | none    | Checks every freshly parsed `*Config`; an error rejects it like a parse error, see [Struct Validation](#-struct-validation) |
 
 ### Behaviour
 
@@ -819,6 +822,7 @@ func (w *Watcher) Stop()
 | File edited in place                     | New `Config` is installed once the file is stable for one interval  |
 | File replaced by rename (atomic save)    | Detected, because the file identity changes                         |
 | New content has a syntax / type error    | `OnError` is called once, last good config stays active             |
+| `Validate` returns an error              | `OnError` is called once, last good config stays active; at start `Watch` returns the error |
 | File deleted                             | `OnError` is called once, last good config stays active             |
 | File reappears or is fixed               | Reloaded and `OnReload` is called                                   |
 | File larger than `MaxFileSize`           | `OnError` receives `ErrWatchFileTooLarge`, last good config stays   |
@@ -979,6 +983,111 @@ Syntax errors in the DML text surface as a redacted `*DMLError`, the same as in 
 - A field of an unsupported type (channel, function, complex number, non-empty interface, map with non-string keys) is reported only when its key is present with a value.
 - Data nested deeper than 128 levels fails with `ErrTooDeep`.
 - `Decode` reads the `Config`, so do not call it while another goroutine writes to the same `Config`.
+
+---
+
+## ✅ Struct Validation
+
+Typed unmarshaling checks that a value has the right type. Struct validation checks that it makes sense: a port in range, a list that is not empty, a mode from a fixed set. The rules live in a `validate` struct tag next to the `dml` tag and run inside `Unmarshal`, `UnmarshalFile` and `Decode`, so an invalid config never leaves the call that loads it.
+
+### Example
+
+```go
+type Database struct {
+	Host string `dml:"host" validate:"required"`
+	Port int    `dml:"port" validate:"min=1,max=65535"`
+}
+
+type AppConfig struct {
+	Name     string   `dml:"name" validate:"required,min=3"`
+	Mode     string   `dml:"mode" validate:"oneof=dev staging prod"`
+	Ports    []int    `dml:"ports" validate:"min=1,dive,min=1,max=65535"`
+	Database Database `dml:"database"`
+}
+
+cfg, err := dml.Unmarshal[AppConfig](data)
+if err != nil {
+	log.Fatal(err)
+}
+```
+
+A runnable version lives in `examples/validate/main.go`.
+
+### Rules
+
+| Rule          | Field types                                                      | Meaning                                                                              |
+| ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `required`    | any                                                              | The key is present and not null. Strings, lists and maps must also be non-empty      |
+| `min=N`       | numbers, string, list, array, map                                | Number: value >= N. String: at least N characters. List, array, map: at least N items |
+| `max=N`       | numbers, string, list, array, map                                | Number: value <= N. String: at most N characters. List, array, map: at most N items  |
+| `len=N`       | string, list, array, map                                         | Exactly N characters or items                                                        |
+| `oneof=a b c` | string, integers                                                 | The value is one of the space separated options (case sensitive)                     |
+| `dive`        | list, array, map                                                 | Every rule after `dive` applies to each element (or map value) instead of the container |
+
+- Rules are separated by commas and checked in the order written. `N` is parsed for the field type, so `min=0.5` works on a `float64` and is an error on an `int`. Strings are measured in characters, not bytes.
+- A pointer is followed before the rules run, so `*int` is checked like `int`.
+- Rules after `dive` may contain another `dive`, for example `validate:"dive,min=1,dive,max=9"` on a `[][]int`.
+
+### When rules run
+
+- Validation starts after binding succeeded, so a type error (`*BindError`) is always reported first and on its own.
+- A key that is absent or null is optional: only `required` is checked. Every other rule is skipped.
+- A key that is present is always checked, zero values included. `port = 0` breaks `min=1`.
+- `required` on a number or bool only asks for the key. Use `min=1` when zero must be rejected.
+- A section declared as a struct is mandatory: when it is missing, the `required` rules inside it still fail. A section declared as a pointer (`*Database`) is optional and skipped when missing.
+- Nested structs, structs inside lists and structs inside maps are validated without `dive`. Use `dive` to put rules on the elements themselves.
+- `dml:"-"` and unexported fields are neither bound nor validated.
+
+### Errors
+
+Every violation is collected, so one run shows everything that is wrong:
+
+```go
+_, err := dml.Unmarshal[AppConfig](data)
+
+var validationErr *dml.ValidationError
+if errors.As(err, &validationErr) {
+	for _, field := range validationErr.Fields {
+		fmt.Println(field.Path, field.Rule, field.Param)
+	}
+}
+
+fmt.Println(errors.Is(err, dml.ErrValidation))
+```
+
+```
+dml: validation failed (3): name: min=3; ports[1]: max=65535; database.host: required
+```
+
+- `Fields` follows the order of the struct fields, and map keys are sorted. At most 100 violations are collected, `Error()` prints the first 10.
+- Paths use the DML key names, like `ports[1]` or `database.host`.
+- Messages carry only the path, the rule and the parameter written in the tag. They never contain the offending value.
+- On any error the returned pointer is `nil`.
+- A malformed tag (unknown rule, a parameter that does not fit the field type, `min` on a bool, `dive` on a string) is a mistake in your code, not in the data. It is returned as a `*BindError` wrapping `ErrInvalidRule`, and it is found whenever the struct is visited, even when the key is missing from the file.
+
+### Validating live reloads
+
+`Watch` has no type parameter, so pass a `Validate` function that decodes into your struct. A reload that fails validation is reported through `OnError` and the previous config stays active, exactly like a syntax error:
+
+```go
+watcher, err := dml.Watch("config.dml", dml.WatchOptions{
+	Validate: func(c *dml.Config) error {
+		_, err := dml.Decode[AppConfig](c)
+		return err
+	},
+	OnError: func(err error) {
+		log.Printf("config rejected: %v", err)
+	},
+})
+```
+
+At start `Watch` returns the validation error instead of a watcher.
+
+### Limitations
+
+- The tag name `validate` is shared with other Go libraries. Rules this package does not know (`email`, `url`, `gt`, ...) fail with `ErrInvalidRule` instead of being ignored, so tags written for another library have to be removed or renamed.
+- There are no regular expressions, no rules that compare two fields and no custom functions. There is no separate schema file and the `dml` command does not validate, because it does not know your structs.
+- Keys that are missing from a section declared as a pointer are not checked, because the section itself is skipped.
 
 ---
 
@@ -1160,6 +1269,10 @@ Every function that takes a file path (`Load`, `NewConfig`, `UnmarshalFile`, `Ca
 | `ErrMissingRequired`  | Key marked `required` is absent or null           |
 | `ErrTooDeep`          | Data nested deeper than the limit                 |
 | `ErrNilConfig`        | `Decode` was called with a nil config             |
+| `ValidationError`     | All `validate` violations found in one decode     |
+| `FieldError`          | One violation: path, rule and rule parameter      |
+| `ErrValidation`       | A value breaks a `validate` rule                  |
+| `ErrInvalidRule`      | A `validate` tag is malformed or does not fit the field |
 
 ### 🔹 Internal helpers
 

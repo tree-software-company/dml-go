@@ -35,11 +35,15 @@ func (e *BindError) Unwrap() error {
 }
 
 func newBindError(path string, err error, detail string) *BindError {
+	return &BindError{Path: displayPath(path), Detail: detail, Err: err}
+}
+
+func displayPath(path string) string {
 	switch {
 	case path == "":
-		path = rootBindPath
+		return rootBindPath
 	case strings.HasPrefix(path, "["):
-		path = rootBindPath + path
+		return rootBindPath + path
 	}
-	return &BindError{Path: path, Detail: detail, Err: err}
+	return path
 }

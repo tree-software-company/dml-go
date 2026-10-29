@@ -406,3 +406,61 @@ func TestWatch_ConcurrentReaders(t *testing.T) {
 		t.Fatalf("readers observed %d out-of-range values", outOfRange.Load())
 	}
 }
+
+type watchedConfig struct {
+	App  string `dml:"app"`
+	Port int    `dml:"port" validate:"min=1"`
+}
+
+func validateWatchedConfig(c *Config) error {
+	_, err := Decode[watchedConfig](c)
+	return err
+}
+
+func TestWatch_ValidateRejectsInitialLoad(t *testing.T) {
+	path := writeTempDML(t, "string app = \"v1\";\nint port = 0;\n")
+
+	w, err := Watch(path, WatchOptions{Interval: 10 * time.Millisecond, Validate: validateWatchedConfig})
+	if err == nil {
+		w.Stop()
+		t.Fatalf("expected a validation error")
+	}
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+func TestWatch_ValidateAcceptsInitialLoad(t *testing.T) {
+	path := writeTempDML(t, "string app = \"v1\";\nint port = 8080;\n")
+
+	w := startWatch(t, path, WatchOptions{Interval: 10 * time.Millisecond, Validate: validateWatchedConfig})
+
+	if got := w.GetString("app"); got != "v1" {
+		t.Fatalf("expected app=v1, got %q", got)
+	}
+}
+
+func TestWatch_KeepsLastGoodConfigOnValidationError(t *testing.T) {
+	path := writeTempDML(t, "string app = \"v1\";\nint port = 8080;\n")
+	reloaded, errs, opts := newWatchChannels()
+	opts.Validate = validateWatchedConfig
+	w := startWatch(t, path, opts)
+
+	rewriteDML(t, path, "string app = \"v2\";\nint port = 0;\n")
+
+	err := awaitError(t, errs)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+	if got := w.GetString("app"); got != "v1" {
+		t.Fatalf("expected last good config to be kept, got app=%q", got)
+	}
+	expectQuiet(t, reloaded, errs)
+
+	rewriteDML(t, path, "string app = \"v3\";\nint port = 9090;\n")
+
+	awaitReload(t, reloaded, appIs("v3"))
+	if got := w.GetString("app"); got != "v3" {
+		t.Fatalf("expected recovery to v3, got %q", got)
+	}
+}

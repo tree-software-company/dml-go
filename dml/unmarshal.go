@@ -30,6 +30,9 @@ func Decode[T any](c *Config) (*T, error) {
 	if err := bindValue(reflect.ValueOf(result).Elem(), reflect.ValueOf(c.data), "", 0); err != nil {
 		return nil, err
 	}
+	if err := validateDecoded(reflect.ValueOf(result).Elem(), reflect.ValueOf(c.data)); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

@@ -22,6 +22,7 @@ type WatchOptions struct {
 	MaxFileSize int64
 	OnReload    func(*Config)
 	OnError     func(error)
+	Validate    func(*Config) error
 }
 
 type Watcher struct {
@@ -56,6 +57,9 @@ func Watch(filepath string, opts WatchOptions) (*Watcher, error) {
 	cfg, err := loadWatched(filepath, opts.MaxFileSize)
 	if err != nil {
 		return nil, redactWatchError(err)
+	}
+	if err := validateWatched(opts, cfg); err != nil {
+		return nil, err
 	}
 
 	w := &Watcher{
@@ -162,6 +166,10 @@ func (w *Watcher) poll() {
 		w.reportError(redactWatchError(err))
 		return
 	}
+	if err := validateWatched(w.opts, cfg); err != nil {
+		w.reportError(err)
+		return
+	}
 
 	w.mu.Lock()
 	w.cfg = cfg
@@ -205,6 +213,16 @@ func loadWatched(filepath string, maxSize int64) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateWatched(opts WatchOptions, cfg *Config) error {
+	if opts.Validate == nil {
+		return nil
+	}
+	if err := opts.Validate(cfg); err != nil {
+		return fmt.Errorf("dml watch: %w", err)
+	}
+	return nil
 }
 
 func redactWatchError(err error) error {
